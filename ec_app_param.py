@@ -1,10 +1,11 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-__author__ = 'fi11222'
-
 import os
 from ec_local_param import *
+
+__author__ = 'Pavan Mahalingam'
+
 
 class EcAppParam:
     """
@@ -59,9 +60,9 @@ class EcAppParam:
     gcm_dbPassword = gcm_dbPasswordLocal
 
     #: Min size of DB connection pool
-    gcm_connectionPoolMinCount = 30
+    gcm_connectionPoolMinCount = 10
     #: Max size of DB connection pool
-    gcm_connectionPoolMaxCount = 50
+    gcm_connectionPoolMaxCount = 30
 
     #: Flag to disable the connection pool feature. If `True` then new connection creation on each request
     gcm_noConnectionPool = True
@@ -74,4 +75,3 @@ class EcAppParam:
     gcm_mailRecipients = ['nicolas.reimen@gmail.com', 'nrtmp@free.fr']
     #: Location of CSV log file
     gcm_logFile = os.path.join(gcm_appRoot, 'Log/ec_log.csv')
-

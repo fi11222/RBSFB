@@ -1,12 +1,13 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-__author__ = 'Pavan Mahalingam'
-
 from ec_utilities import *
 
 import threading
 import psutil
+
+__author__ = 'Pavan Mahalingam'
+
 
 class EcAppCore(threading.Thread):
     """
@@ -23,12 +24,15 @@ class EcAppCore(threading.Thread):
         """
         super().__init__(daemon=True)
 
+        # bogus variable introduced to avoid a PEP-8 pedantic complaint in get_response
+        self.m_rq = None
+
         # logger
         self.m_logger = logging.getLogger('AppCore')
 
-        # connecion pool init
+        # connection pool init
         try:
-            self.m_connectionPool = EcConnectionPool.getNew()
+            self.m_connectionPool = EcConnectionPool.get_new()
         except Exception as e:
             self.m_logger.warning('Unable to start Connection pool: {0}-{1}'.format(
                 type(e).__name__, repr(e)
@@ -66,8 +70,9 @@ class EcAppCore(threading.Thread):
         except psycopg2.IntegrityError as e:
             self.m_logger.warning('TB_EC_MSG insert failure - Integrity error: {0}-{1}'.format(
                 type(e).__name__,
-                repr(e)
-            ))
+                repr(e)) +
+                '/[{0}] {1}'.format(e.pgcode, e.pgerror)
+            )
             raise
         except Exception as e:
             self.m_logger.warning('TB_EC_MSG insert failure: {0}-{1}'.format(
@@ -78,7 +83,7 @@ class EcAppCore(threading.Thread):
 
         l_cursor.close()
         self.m_connectionPool.putconn(l_conn)
-        self.m_logger.info('Sucessuful TB_EC_MSG insert - The DB appears to be working')
+        self.m_logger.info('Successful TB_EC_MSG insert - The DB appears to be working')
 
         # health check counter
         self.m_hcCounter = 0
@@ -86,18 +91,22 @@ class EcAppCore(threading.Thread):
         # starts the refresh thread
         self.start()
 
-    #: Connecion pool access
-    def getConnectionPool(self):
+    #: Connection pool access
+    def get_connection_pool(self):
         return self.m_connectionPool
 
     #: Main application entry point - App response to an HTTP request
-    def getResponse(self, p_requestHandler):
+    def get_response(self, p_requestHandler):
+        # completely useless line. Only there to avoid PEP-8 pedantic complaint
+        self.m_rq = p_requestHandler
+
         return '{"status":"FAIL", "message":"You should never see this. If you do then things are really wrong"}'
 
     # ------------------------- System health test ---------------------------------------------------------------------
     def check_system_health(self):
         """
-        Checks memory usage and issues a warning if over 75%.
+        Every 30 sec., checks memory usage and issues a warning if over 75% and produces a full connection pool
+        status report.
 
         Every tenth time (once in 5 min.) a full recording of system parameters is made through
         `psutil <https://pythonhosted.org/psutil/>`_ and stored in `TB_MSG`.
@@ -152,7 +161,7 @@ class EcAppCore(threading.Thread):
                 ))
                 l_conn.commit()
             except Exception as e:
-                EcMailer.sendMail('TB_EC_MSG insert failure: {0}-{1}'.format(
+                EcMailer.send_mail('TB_EC_MSG insert failure: {0}-{1}'.format(
                     type(e).__name__,
                     repr(e)
                 ), 'Sent from EcAppCore::check_system_health')
@@ -173,8 +182,8 @@ class EcAppCore(threading.Thread):
             # system health check
             self.check_system_health()
 
+            # output a full connection pool usage report
             l_fLogName = re.sub('\.csv', '.all_connections', EcAppParam.gcm_logFile)
             l_fLog = open(l_fLogName, 'w')
             l_fLog.write(self.m_connectionPool.connectionReport())
             l_fLog.close()
-

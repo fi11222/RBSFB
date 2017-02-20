@@ -42,7 +42,7 @@ class LocalParam:
     gcm_gmailSmtp = True
 
     #: Gmail/TLS password
-    gcm_mailSenderPassword = '14Maliki'
+    gcm_mailSenderPassword = '16Edhenas'
 
     #: If True, use Amazon AWS specific method to connect to the smtp server (SES)
     gcm_amazonSmtp = False
@@ -55,5 +55,5 @@ class LocalParam:
     gcm_sesPassword = ''
 
     #: global root path
-    gcm_appRoot = '/home/fi11222/disk-partage/Dev/ScripTrans/'
+    gcm_appRoot = '/home/fi11222/disk-partage/Dev/RBSFB/'
 
