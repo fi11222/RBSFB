@@ -21,7 +21,6 @@ class EcAppParam:
     gcm_dbPasswordLocal = LocalParam.gcm_dbPasswordLocal
     gcm_debugModeOn = LocalParam.gcm_debugModeOn
     gcm_verboseModeOn = LocalParam.gcm_verboseModeOn
-    gcm_skipBrowscap = LocalParam.gcm_skipBrowscap
     gcm_mailSender = LocalParam.gcm_mailSender
     gcm_smtpServer = LocalParam.gcm_smtpServer
     gcm_amazonSmtp = LocalParam.gcm_amazonSmtp
@@ -64,8 +63,9 @@ class EcAppParam:
     #: Max size of DB connection pool
     gcm_connectionPoolMaxCount = 30
 
-    #: Flag to disable the connection pool feature. If `True` then new connection creation on each request
-    gcm_noConnectionPool = True
+    #: Flag to disable the connection pool feature. If `True` then new connection creation on each request.
+    #: Not active at the moment.
+    gcm_noConnectionPool = False
 
     #: average db connection life span (in hours)
     gcm_dbcLifeAverage = 2

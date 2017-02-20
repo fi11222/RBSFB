@@ -85,16 +85,27 @@ class EcLogger(logging.Logger):
                 , connection_factory=EcConnection
             )
         except psycopg2.Error as e:
-            EcMailer.send_mail('Failed to create logging connection pool: {0}-{1}'.format(
-                type(e).__name__,
-                repr(e)
-            ),
-                'Sent from EcLogger.logInit\n' +
-                'pgerror : ' + e.pgerror + '\n' +
-                'pgcode  : {0}\n'.format(e.pgcode) +
-                'diag    : {0}\n'.format(repr(e.diag))
+            EcMailer.send_mail(
+                'Failed to create logging connection pool: {0}'.format(repr(e)),
+                'Sent from EcLogger.logInit\n' + EcConnectionPool.get_psycopg2_error_block(e)
             )
             raise
+
+        # purge TB_EC_DEBUG
+        l_conn = EcLogger.cm_pool.getconn()
+        l_cursor = l_conn.cursor()
+        try:
+            l_cursor.execute('delete from "TB_EC_DEBUG"')
+            l_conn.commit()
+        except psycopg2.Error as e:
+            EcMailer.send_mail(
+                'TB_EC_DEBUG purge failure: {0}'.format(repr(e)),
+                'Sent from EcLogger.logInit\n' + EcConnectionPool.get_psycopg2_error_block(e)
+            )
+            raise
+
+        l_cursor.close()
+        EcLogger.cm_pool.putconn(l_conn)
 
         # Creates the column headers for the CSV log file
         l_fLog = open(EcAppParam.gcm_logFile, 'w')
@@ -129,10 +140,10 @@ class EcLogger(logging.Logger):
                 )
 
                 # log message in TB_EC_DEBUG
-                l_conn = EcLogger.cm_pool.getconn()
-                l_cursor = l_conn.cursor()
+                l_conn1 = EcLogger.cm_pool.getconn()
+                l_cursor1 = l_conn1.cursor()
                 try:
-                    l_cursor.execute("""
+                    l_cursor1.execute("""
                             insert into "TB_EC_DEBUG"(
                                 "ST_NAME",
                                 "ST_LEVEL",
@@ -152,21 +163,16 @@ class EcLogger(logging.Logger):
                         p_record.lineno,
                         re.sub('\s+', ' ', p_record.msg)
                     ))
-                    l_conn.commit()
+                    l_conn1.commit()
                 except psycopg2.Error as e1:
-                    EcMailer.send_mail('TB_EC_DEBUG insert failure: {0}-{1}'.format(
-                        type(e1).__name__,
-                        repr(e1)
-                    ),
-                        'Sent from EcCsvFormatter\n' +
-                        'pgerror : ' + e.pgerror + '\n' +
-                        'pgcode  : {0}\n'.format(e1.pgcode) +
-                        'diag    : {0}\n'.format(repr(e1.diag))
+                    EcMailer.send_mail(
+                        'TB_EC_DEBUG insert failure: {0}'.format(repr(e1)),
+                        'Sent from EcCsvFormatter\n' + EcConnectionPool.get_psycopg2_error_block(e1)
                     )
                     raise
 
-                l_cursor.close()
-                EcLogger.cm_pool.putconn(l_conn)
+                l_cursor1.close()
+                EcLogger.cm_pool.putconn(l_conn1)
 
                 return re.sub('\s+', ' ', super().format(l_record))
 
@@ -189,10 +195,10 @@ class EcLogger(logging.Logger):
                     )
 
                     # log message in TB_EC_MSG
-                    l_conn = EcLogger.cm_pool.getconn()
-                    l_cursor = l_conn.cursor()
+                    l_conn1 = EcLogger.cm_pool.getconn()
+                    l_cursor1 = l_conn1.cursor()
                     try:
-                        l_cursor.execute("""
+                        l_cursor1.execute("""
                             insert into "TB_EC_MSG"(
                                 "ST_NAME",
                                 "ST_LEVEL",
@@ -212,21 +218,16 @@ class EcLogger(logging.Logger):
                             p_record.lineno,
                             re.sub('\s+', ' ', p_record.msg)
                         ))
-                        l_conn.commit()
+                        l_conn1.commit()
                     except psycopg2.Error as e1:
-                        EcMailer.send_mail('TB_EC_MSG insert failure: {0}-{1}'.format(
-                            type(e1).__name__,
-                            repr(e1)
-                        ),
-                            'Sent from EcConsoleFormatter\n' +
-                            'pgerror : ' + e.pgerror + '\n' +
-                            'pgcode  : {0}\n'.format(e1.pgcode) +
-                            'diag    : {0}\n'.format(repr(e1.diag))
+                        EcMailer.send_mail(
+                            'TB_EC_MSG insert failure: {0}'.format(repr(e1)),
+                            'Sent from EcConsoleFormatter\n' + EcConnectionPool.get_psycopg2_error_block(e1)
                         )
                         raise
 
-                    l_cursor.close()
-                    EcLogger.cm_pool.putconn(l_conn)
+                    l_cursor1.close()
+                    EcLogger.cm_pool.putconn(l_conn1)
 
                 return l_formatted
 
@@ -373,6 +374,7 @@ class EcMailer(threading.Thread):
 
         l_thisSubjectHistoryNew = list()
         l_count = 0
+        # count the number of messages with this subject which have been sent within the last 5 minutes
         for l_pastSend in l_thisSubjectHistory:
             if l_now - l_pastSend < 5*60:
                 l_count += 1
@@ -424,6 +426,7 @@ class EcMailer(threading.Thread):
                 l_stepPassed = 104
             elif EcAppParam.gcm_gmailSmtp:
                 # Gmail / TLS authentication
+                # Also used for Smtp2Go
 
                 # smtp client init
                 l_smtpObj = smtplib.SMTP(EcAppParam.gcm_smtpServer, 587)
@@ -489,6 +492,37 @@ class EcConnectionPool(psycopg2.pool.ThreadedConnectionPool):
     `EcConnectionPool` is built as a subclass of psycopg2's
     `ThreadedConnectionPool <http://pythonhosted.org/psycopg2/pool.html>`_
     """
+
+    @staticmethod
+    def innone(v):
+        return v if v is not None else 'None'
+
+    @staticmethod
+    def get_psycopg2_error_block(e):
+        l_block =  'pgerror : {0}\n'.format(EcConnectionPool.innone(e.pgerror))
+        l_block += 'pgcode : {0}\n'.format(EcConnectionPool.innone(e.pgcode))
+        if e.diag is not None:
+            l_block += 'diag :\n'
+            l_block += 'column_name : {0}\n'.format(EcConnectionPool.innone(e.diag.column_name))
+            l_block += 'constraint_name : {0}\n'.format(EcConnectionPool.innone(e.diag.constraint_name))
+            l_block += 'context : {0}\n'.format(EcConnectionPool.innone(e.diag.context))
+            l_block += 'datatype_name : {0}\n'.format(EcConnectionPool.innone(e.diag.datatype_name))
+            l_block += 'internal_position : {0}\n'.format(EcConnectionPool.innone(e.diag.internal_position))
+            l_block += 'internal_query : {0}\n'.format(EcConnectionPool.innone(e.diag.internal_query))
+            l_block += 'message_detail : {0}\n'.format(EcConnectionPool.innone(e.diag.message_detail))
+            l_block += 'context : {0}\n'.format(EcConnectionPool.innone(e.diag.context))
+            l_block += 'message_hint : {0}\n'.format(EcConnectionPool.innone(e.diag.message_hint))
+            l_block += 'message_primary : {0}\n'.format(EcConnectionPool.innone(e.diag.message_primary))
+            l_block += 'schema_name : {0}\n'.format(EcConnectionPool.innone(e.diag.schema_name))
+            l_block += 'severity : {0}\n'.format(EcConnectionPool.innone(e.diag.severity))
+            l_block += 'source_file : {0}\n'.format(EcConnectionPool.innone(e.diag.source_file))
+            l_block += 'source_function : {0}\n'.format(EcConnectionPool.innone(e.diag.source_function))
+            l_block += 'source_line : {0}\n'.format(EcConnectionPool.innone(e.diag.source_line))
+            l_block += 'sqlstate : {0}\n'.format(EcConnectionPool.innone(e.diag.sqlstate))
+            l_block += 'statement_position : {0}\n'.format(EcConnectionPool.innone(e.diag.statement_position))
+            l_block += 'table_name : {0}\n'.format(EcConnectionPool.innone(e.diag.table_name))
+
+        return l_block
 
     @classmethod
     def get_new(cls):
@@ -654,3 +688,24 @@ class EcConnection(psycopg2.extensions.connection):
 
         """
         self.m_debugData = 'Used'
+
+# ---------------------------------------------------- Main section ----------------------------------------------------
+if __name__ == "__main__":
+    print('+------------------------------------------------------------+')
+    print('| FB scraping web service for ROAD B SCORE                   |')
+    print('|                                                            |')
+    print('| ec_utilities module test                                   |')
+    print('|                                                            |')
+    print('| v. 1.0 - 20/02/2017                                        |')
+    print('+------------------------------------------------------------+')
+
+    EcMailer.init_mailer()
+    EcMailer.send_mail('Test Subject 2', 'Test Body from Smtp2Go')
+
+    EcLogger.log_init()
+    l_logger = logging.getLogger('Test')
+    l_logger.debug('Debug message test')
+    l_logger.info('Info message test')
+    l_logger.warning('Warning message test')
+    l_logger.error('Error message test')
+    l_logger.critical('Critical message test')
