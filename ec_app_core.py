@@ -185,5 +185,5 @@ class EcAppCore(threading.Thread):
             # output a full connection pool usage report
             l_fLogName = re.sub('\.csv', '.all_connections', EcAppParam.gcm_logFile)
             l_fLog = open(l_fLogName, 'w')
-            l_fLog.write(self.m_connectionPool.connectionReport())
+            l_fLog.write(self.m_connectionPool.connection_report())
             l_fLog.close()

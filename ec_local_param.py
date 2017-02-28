@@ -46,7 +46,7 @@ class LocalParam:
     gcm_gmailSmtp = True
 
     #: Gmail/TLS password
-    gcm_mailSenderPassword = '16Edhenas'
+    gcm_mailSenderPassword = '17Siratal'
 
     #: If True, use Amazon AWS specific method to connect to the smtp server (SES)
     gcm_amazonSmtp = False

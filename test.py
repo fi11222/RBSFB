@@ -94,7 +94,18 @@ def receive(p_AT, p_pageID):
 
             print('Person ID : {0}'.format(l_personId))
 
-            l_request = ('https://graph.facebook.com/{0}/{1}?access_token={2}').format('v2.8', l_personId, l_accessToken)
+            l_request = ('https://graph.facebook.com/{0}/{1}?fields={3}&access_token={2}').format(
+                'v2.8', l_personId, l_accessToken, 'id,name,about,age_range,birthday')
+            print('-->' + l_request)
+
+            r = requests.get(l_request)
+            print('   Status Code: {0}'.format(r.status_code))
+
+            l_response = r.text
+            print('   >> ' + l_response)
+
+            l_request = ('https://graph.facebook.com/{0}/{1}/feed?access_token={2}').format(
+                'v2.8', l_personId, l_accessToken)
             print('-->' + l_request)
 
             r = requests.get(l_request)
@@ -130,12 +141,46 @@ if __name__ == "__main__":
     l_pageID = '1644087245606719'
 
     # token associated with the User ID to be transmitted
-    l_senderToken = 'EAACEdEose0cBAOfIxtMEgSJSZBBhAy0um6ZBZCL0y6fqK3NTNgCIqZB3jSXvILitOumYvg0kUH6IFpUUYRaR5mZArnyZADpp8ErFZAu5PuGTAnHToSsFC79GFCrRq2KxGYvAhRZAyLVeHLo3o3Kb90Rb5Gj8eMDfEZCkH4mbFP6acmTrR2iBH3BQNkcb8DmbDLDgZD'
+    l_senderToken = 'EAACEdEose0cBAApZA9CWRefnCzpZCJj4gD1xKUnWvLsrZBBURuHE1ZBIo95XdxoQtZCxkawXXSH2ZBfuv7SBF7LWQA773mYgZBSh48ECCpeNijAzGPZASGwEV4wGoC7Bj4T6iN4FHbLw6ZB4d2v7ZB1iaSMlm8iVfSZAee4WKDCpD61hzZAcy1k1kWJ7nluLrdqcZCg0ZD'
 
     # token associated with a user who has admin privileges for the page (required for post deletion)
-    l_receiverToken = 'EAACEdEose0cBAPKKAhvgN97rATWmZCA14H7aR6ZAo333Csd1PJ0o7UF68aakFygmF7aoPcUQqi1sZCw43UCZAdLeXbmlcH9G8iDYWtmKYPed2tgzXvYpxKGYKpl21F0Qt3yicKG9Y4Lc962bZAUxhg4tDOTcZBDZAcSkH0ZAjnz6BfZC6Subra9f6RawvsJsTZA7gZD'
+    l_receiverToken = 'EAACEdEose0cBAHZCZA6GUrbVURTwquwZCSavoVrNAC0RTWjLvuyjESVo9LO4ia7Vb9wTfb3DYcxgzIqdIcfZBCMcZC76ZCZBTznsZAv0b9uUnlHADPdTKRXs3j6gcMcgrcQc8ulFwnpnZBoKCbuhVQAuGriTvxYHKoQCvRWV0WOTlffvh9NQtCik1GTsgF5Pmql4ZD'
 
     send(l_senderToken, l_pageID)
     receive(l_receiverToken, l_pageID)
 
+    # retrieves sender ID
+    l_request = ('https://graph.facebook.com/{0}/me?fields={2}&access_token={1}').format(
+        'v2.8', l_senderToken, 'id,name,about,age_range,birthday')
+    print('-->' + l_request)
+
+    r = requests.get(l_request)
+    print('   Status Code: {0}'.format(r.status_code))
+
+    l_response = r.text
+    print('   >> ' + l_response)
+
+    if r.status_code == 200:
+        l_responseData = json.loads(l_response)
+        l_personId = l_responseData['id']
+
+        l_request = ('https://graph.facebook.com/{0}/{1}?fields={3}&access_token={2}').format(
+            'v2.8', l_personId, l_senderToken, 'id,name,about,age_range,birthday')
+        print('-->' + l_request)
+
+        r = requests.get(l_request)
+        print('   Status Code: {0}'.format(r.status_code))
+
+        l_response = r.text
+        print('   >> ' + l_response)
+
+        l_request = ('https://graph.facebook.com/{0}/{1}/feed?access_token={2}').format(
+            'v2.8', l_personId, l_senderToken)
+        print('-->' + l_request)
+
+        r = requests.get(l_request)
+        print('   Status Code: {0}'.format(r.status_code))
+
+        l_response = r.text
+        print('   >> ' + l_response)
 
