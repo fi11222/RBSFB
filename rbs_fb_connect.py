@@ -6,6 +6,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common import exceptions as EX
+from selenium.webdriver.common.action_chains import ActionChains
 
 import lxml.html as html
 import sys
@@ -71,13 +72,85 @@ def get_unique_attr(p_frag, p_xpath, p_attribute):
 def get_unique(p_frag, p_xpath):
     return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
 
-def get_profile():
+def get_profile(p_driver):
     EcLogger.cm_logger.info("get_profile()")
 
-    WebDriverWait(l_driver0, 15).until(
+    WebDriverWait(p_driver, 15).until(
         EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
 
     EcLogger.cm_logger.info("presence of hyperfeed_story_id_")
+
+
+    WebDriverWait(p_driver, 15).until(
+        EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "more_pager_pagelet_")]')))
+
+    EcLogger.cm_logger.info("presence of more_pager_pagelet_")
+
+    l_expansionCount = 3
+
+    while True:
+        l_pagers_found = 0
+        l_last_pager = None
+        for l_last_pager in p_driver.find_elements_by_xpath('//div[contains(@id, "more_pager_pagelet_")]'):
+            l_pagers_found += 1
+
+        EcLogger.cm_logger.info('Expanding pager #{0}'.format(l_pagers_found))
+        if l_last_pager is not None:
+            p_driver.execute_script("return arguments[0].scrollIntoView();", l_last_pager)
+
+        if l_pagers_found >= l_expansionCount:
+            break
+
+    l_stab_iter = 0
+    while True:
+        l_finished = True
+        for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
+            try:
+                l_data_ft = l_story.get_attribute('data-ft')
+
+                if l_data_ft is not None:
+                    l_finished = False
+            except EX.StaleElementReferenceException:
+                continue
+
+        EcLogger.cm_logger.info('Stab loop #{0}'.format(l_stab_iter))
+        l_stab_iter += 1
+        if l_finished:
+            break
+
+    p_driver.execute_script('window.scrollTo(0, 0);')
+    l_iter_disp = 0
+    for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
+        try:
+            l_html = l_story.get_attribute('outerHTML')
+            l_id = l_story.get_attribute('id')
+            l_id = re.sub('hyperfeed_story_id_', '', l_id).strip()
+            # extract a full xml/html tree from the page
+            l_tree = html.fromstring(l_html)
+
+            # class="_5ptz"
+            l_date = get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
+            l_from = get_unique(l_tree, '//a[contains(@class, "profileLink")]')
+
+            l_htmlShort = l_html[:500]
+            if len(l_html) != len(l_htmlShort):
+                l_htmlShort += '...'
+            print("-------- {0} --------\n{1}".format(l_iter_disp, l_htmlShort))
+
+            print('Id       : ' + l_id)
+            print('Date     : ' + l_date)
+            print('From     : ' + l_from)
+            print('Location : {0}'.format(l_story.location))
+
+            p_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
+            p_driver.execute_script("window.scrollBy(0, -100);")
+            WebDriverWait(l_driver0, 15).until(EC.visibility_of(l_story))
+            p_driver.get_screenshot_as_file('{0:03}-'.format(l_iter_disp) + l_id + '.png')
+            #l_story.screenshot(l_id + '.png')
+
+            l_iter_disp += 1
+        except EX.StaleElementReferenceException:
+            print('***** STALE ! ******')
 
 
 def old_1():
@@ -170,4 +243,4 @@ if __name__ == "__main__":
     EcLogger.cm_logger.info("logging in ...")
     l_driver0 = login_as_scrape(l_phantomId, l_phantomPwd)
 
-    get_profile()
+    get_profile(l_driver0)

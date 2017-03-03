@@ -18,7 +18,7 @@ class LocalParam:
 
     # Database parameters
     #: Database server name (normally 'localhost' but could be different in non-prod env)
-    gcm_dbServer = 'localhost'
+    gcm_dbServer = '192.168.0.51'
 
     #: Database connection user name
     gcm_dbUserLocal = 'postgres'
@@ -59,5 +59,5 @@ class LocalParam:
     gcm_sesPassword = ''
 
     #: global root path
-    gcm_appRoot = '/home/fi11222/disk-partage/Dev/RBSFB/'
+    gcm_appRoot = '/home/fi11222/RBSFB/'
 
