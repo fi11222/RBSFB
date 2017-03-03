@@ -8,7 +8,9 @@ from selenium.webdriver.common.by import By
 from selenium.common import exceptions as EX
 
 import lxml.html as html
-import time
+import sys
+
+from ec_utilities import *
 
 __author__ = 'Pavan Mahalingam'
 
@@ -68,23 +70,17 @@ def get_unique_attr(p_frag, p_xpath, p_attribute):
 # inside the string if more than one was found
 def get_unique(p_frag, p_xpath):
     return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
-# ---------------------------------------------------- Main section ----------------------------------------------------
-if __name__ == "__main__":
-    print('+------------------------------------------------------------+')
-    print('| FB scraping web service for ROAD B SCORE                   |')
-    print('|                                                            |')
-    print('| POST request sending test client                           |')
-    print('|                                                            |')
-    print('| v. 1.0 - 28/02/2017                                        |')
-    print('+------------------------------------------------------------+')
 
-    g_browser = 'Firefox'
+def get_profile():
+    EcLogger.cm_logger.info("get_profile()")
 
-    l_phantomId = 'karim.elmoulaid@gmail.com'
-    l_phantomPwd = '15Eyyaka'
+    WebDriverWait(l_driver0, 15).until(
+        EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
 
-    l_driver0 = login_as_scrape(l_phantomId, l_phantomPwd)
+    EcLogger.cm_logger.info("presence of hyperfeed_story_id_")
 
+
+def old_1():
     WebDriverWait(l_driver0, 15).until(
         EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
 
@@ -120,3 +116,58 @@ if __name__ == "__main__":
                 print('***** STALE ! ******')
 
         time.sleep(.10)
+
+# ---------------------------------------------------- Main section ----------------------------------------------------
+if __name__ == "__main__":
+    print('+------------------------------------------------------------+')
+    print('| FB scraping web service for ROAD B SCORE                   |')
+    print('|                                                            |')
+    print('| POST request sending test client                           |')
+    print('|                                                            |')
+    print('| v. 1.0 - 28/02/2017                                        |')
+    print('+------------------------------------------------------------+')
+
+    # mailer init
+    EcMailer.init_mailer()
+
+    # test connection to PostgresQL and wait if unavailable
+    gcm_maxiter = 20
+    l_iter = 0
+    while True:
+        if l_iter >= gcm_maxiter:
+            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', 'l_iter = {0}'.format(l_iter))
+            sys.exit(0)
+
+        l_iter += 1
+
+        try:
+            l_connect = psycopg2.connect(
+                host=EcAppParam.gcm_dbServer,
+                database=EcAppParam.gcm_dbDatabase,
+                user=EcAppParam.gcm_dbUser,
+                password=EcAppParam.gcm_dbPassword
+            )
+
+            l_connect.close()
+            break
+        except psycopg2.Error as e:
+            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', repr(e))
+            time.sleep(1)
+            continue
+
+
+    # logging system init
+    try:
+        EcLogger.log_init()
+    except Exception as e:
+        EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
+
+    g_browser = 'Firefox'
+
+    l_phantomId = 'aziz.sharjahulmulk@gmail.com'
+    l_phantomPwd = '15Eyyaka'
+
+    EcLogger.cm_logger.info("logging in ...")
+    l_driver0 = login_as_scrape(l_phantomId, l_phantomPwd)
+
+    get_profile()
