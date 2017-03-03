@@ -21,15 +21,18 @@ def get_driver():
     if g_browser == 'Firefox':
         # Create a new instance of the Firefox driver
         l_driver = webdriver.Firefox()
+
+        # Resize the window to the screen width/height
+        l_driver.set_window_size(1200, 1100)
+
+        # Move the window to position x/y
+        l_driver.set_window_position(800, 0)
     else:
         # Create a new instance of the PhantomJS driver
         l_driver = webdriver.PhantomJS()
 
-    # Resize the window to the screen width/height
-    l_driver.set_window_size(1200, 1100)
-
-    # Move the window to position x/y
-    l_driver.set_window_position(800, 0)
+        # Resize the window to the screen width/height
+        l_driver.set_window_size(1200, 1100)
 
     return l_driver
 
@@ -119,6 +122,7 @@ def get_profile(p_driver):
             break
 
     p_driver.execute_script('window.scrollTo(0, 0);')
+    l_curY = 0
     l_iter_disp = 0
     for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
         try:
@@ -137,16 +141,32 @@ def get_profile(p_driver):
                 l_htmlShort += '...'
             print("-------- {0} --------\n{1}".format(l_iter_disp, l_htmlShort))
 
+            l_location = l_story.location
+
             print('Id       : ' + l_id)
             print('Date     : ' + l_date)
             print('From     : ' + l_from)
-            print('Location : {0}'.format(l_story.location))
+            print('Location : {0}'.format(l_location))
+            print('l_curY   : {0}'.format(l_curY))
 
-            p_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
-            p_driver.execute_script("window.scrollBy(0, -100);")
+            l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
+            l_deltaY = l_yTop - l_curY
+            l_curY = l_yTop
+
+            print('l_yTop   : {0}'.format(l_yTop))
+            print('l_deltaY : {0}'.format(l_deltaY))
+
+            #p_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
+            #p_driver.execute_script("window.scrollBy(0, -100);")
+            p_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
             WebDriverWait(l_driver0, 15).until(EC.visibility_of(l_story))
-            p_driver.get_screenshot_as_file('{0:03}-'.format(l_iter_disp) + l_id + '.png')
-            #l_story.screenshot(l_id + '.png')
+
+            l_baseName = '{0:03}-'.format(l_iter_disp) + l_id
+            p_driver.get_screenshot_as_file(l_baseName + '.png')
+
+            #l_story.screenshot(l_baseName + '_.png')
+            with open(l_baseName + '.xml', "w") as l_xml_file:
+                l_xml_file.write(l_html)
 
             l_iter_disp += 1
         except EX.StaleElementReferenceException:
@@ -236,6 +256,7 @@ if __name__ == "__main__":
         EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
 
     g_browser = 'Firefox'
+    #g_browser = 'xxx'
 
     l_phantomId = 'aziz.sharjahulmulk@gmail.com'
     l_phantomPwd = '15Eyyaka'
