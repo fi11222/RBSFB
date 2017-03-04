@@ -17,7 +17,16 @@ __author__ = 'Pavan Mahalingam'
 
 # opens a Selenium driven Firefox window
 def get_driver():
-    if g_browser == 'Firefox':
+    if g_browser == 'Chrome':
+        # Create a new instance of the Firefox driver
+        l_driver = webdriver.Chrome()
+
+        # Resize the window to the screen width/height
+        l_driver.set_window_size(1200, 1100)
+
+        # Move the window to position x/y
+        l_driver.set_window_position(800, 0)
+    elif g_browser == 'Firefox':
         # Create a new instance of the Firefox driver
         l_driver = webdriver.Firefox()
 
@@ -343,8 +352,9 @@ if __name__ == "__main__":
     except Exception as e:
         EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
 
-    g_browser = 'Firefox'
+    #g_browser = 'Firefox'
     #g_browser = 'xxx'
+    g_browser = 'Chrome'
 
     l_phantomId = 'aziz.sharjahulmulk@gmail.com'
     l_phantomPwd = '15Eyyaka'
@@ -352,7 +362,7 @@ if __name__ == "__main__":
     EcLogger.cm_logger.info("logging in ...")
     l_driver0 = login_as_scrape(l_phantomId, l_phantomPwd)
 
-    if g_browser == 'Firefox':
+    if g_browser == 'Firefox' or g_browser == 'Chrome':
         # noinspection PyTypeChecker
         get_profile_ff(l_driver0)
     else:
