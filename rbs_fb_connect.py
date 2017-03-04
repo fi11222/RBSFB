@@ -6,7 +6,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common import exceptions as EX
-from selenium.webdriver.common.action_chains import ActionChains
 
 import lxml.html as html
 import sys
@@ -260,9 +259,10 @@ def get_profile_ff(p_driver):
         except EX.StaleElementReferenceException:
             print('***** STALE ! ******')
 
+    p_driver.quit()
 
-def old_1():
-    WebDriverWait(l_driver0, 15).until(
+def old_1(p_driver):
+    WebDriverWait(p_driver, 15).until(
         EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
 
     l_iter = 0
@@ -271,7 +271,7 @@ def old_1():
         l_iter += 1
 
         l_iter_inner = 0
-        for l_story in l_driver0.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
+        for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
             try:
                 l_html = l_story.get_attribute('outerHTML')
 
@@ -343,8 +343,8 @@ if __name__ == "__main__":
     except Exception as e:
         EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
 
-    #g_browser = 'Firefox'
-    g_browser = 'xxx'
+    g_browser = 'Firefox'
+    #g_browser = 'xxx'
 
     l_phantomId = 'aziz.sharjahulmulk@gmail.com'
     l_phantomPwd = '15Eyyaka'
@@ -353,6 +353,8 @@ if __name__ == "__main__":
     l_driver0 = login_as_scrape(l_phantomId, l_phantomPwd)
 
     if g_browser == 'Firefox':
+        # noinspection PyTypeChecker
         get_profile_ff(l_driver0)
     else:
+        # noinspection PyTypeChecker
         get_profile_pjs(l_driver0)
