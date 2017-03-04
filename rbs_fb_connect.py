@@ -75,7 +75,95 @@ def get_unique_attr(p_frag, p_xpath, p_attribute):
 def get_unique(p_frag, p_xpath):
     return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
 
-def get_profile(p_driver):
+def get_profile_pjs(p_driver):
+    EcLogger.cm_logger.info("get_profile()")
+
+    WebDriverWait(p_driver, 15).until(
+        EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
+
+    EcLogger.cm_logger.info("presence of hyperfeed_story_id_")
+
+
+    WebDriverWait(p_driver, 15).until(
+        EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "more_pager_pagelet_")]')))
+
+    EcLogger.cm_logger.info("presence of more_pager_pagelet_")
+
+    for i in range(0):
+        p_driver.get_screenshot_as_file('FeedLoad_{0:02}.png'.format(i))
+        time.sleep(.1)
+
+    l_expansionCount = 3
+    while True:
+        l_pagers_found = 0
+        l_last_pager = None
+        for l_last_pager in p_driver.find_elements_by_xpath('//div[contains(@id, "more_pager_pagelet_")]'):
+            l_pagers_found += 1
+
+        EcLogger.cm_logger.info('Expanding pager #{0}'.format(l_pagers_found))
+        if l_last_pager is not None:
+            p_driver.execute_script("return arguments[0].scrollIntoView();", l_last_pager)
+
+        p_driver.get_screenshot_as_file('ExpansionLoad_{0:02}.png'.format(l_pagers_found))
+
+        if l_pagers_found >= l_expansionCount:
+            break
+
+    l_stab_iter = 0
+    while True:
+        l_finished = True
+        for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
+            try:
+                l_data_ft = l_story.get_attribute('data-ft')
+
+                if l_data_ft is not None:
+                    l_finished = False
+            except EX.StaleElementReferenceException:
+                continue
+
+        EcLogger.cm_logger.info('Stab loop #{0}'.format(l_stab_iter))
+        l_stab_iter += 1
+        if l_finished:
+            break
+
+    p_driver.get_screenshot_as_file('ExpansionLoad_98_Stab.png')
+
+    l_iter_disp = 0
+    for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
+        try:
+            l_html = l_story.get_attribute('outerHTML')
+            l_id = l_story.get_attribute('id')
+            l_id = re.sub('hyperfeed_story_id_', '', l_id).strip()
+            # extract a full xml/html tree from the page
+            l_tree = html.fromstring(l_html)
+
+            # class="_5ptz"
+            l_date = get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
+            l_from = get_unique(l_tree, '//a[contains(@class, "profileLink")]')
+
+            l_htmlShort = l_html[:500]
+            if len(l_html) != len(l_htmlShort):
+                l_htmlShort += '...'
+            print("-------- {0} --------\n{1}".format(l_iter_disp, l_htmlShort))
+
+            l_location = l_story.location
+
+            print('Id       : ' + l_id)
+            print('Date     : ' + l_date)
+            print('From     : ' + l_from)
+            print('Location : {0}'.format(l_location))
+
+            l_iter_disp += 1
+        except EX.StaleElementReferenceException:
+            print('***** STALE ! ******')
+
+    for i in range(2):
+        p_driver.get_screenshot_as_file('ExpansionLoad_99_Final_{0:02}.png'.format(i))
+        time.sleep(.1)
+
+    p_driver.quit()
+
+def get_profile_ff(p_driver):
     EcLogger.cm_logger.info("get_profile()")
 
     WebDriverWait(p_driver, 15).until(
@@ -255,8 +343,8 @@ if __name__ == "__main__":
     except Exception as e:
         EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
 
-    g_browser = 'Firefox'
-    #g_browser = 'xxx'
+    #g_browser = 'Firefox'
+    g_browser = 'xxx'
 
     l_phantomId = 'aziz.sharjahulmulk@gmail.com'
     l_phantomPwd = '15Eyyaka'
@@ -264,4 +352,7 @@ if __name__ == "__main__":
     EcLogger.cm_logger.info("logging in ...")
     l_driver0 = login_as_scrape(l_phantomId, l_phantomPwd)
 
-    get_profile(l_driver0)
+    if g_browser == 'Firefox':
+        get_profile_ff(l_driver0)
+    else:
+        get_profile_pjs(l_driver0)
