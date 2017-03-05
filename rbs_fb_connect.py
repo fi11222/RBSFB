@@ -6,6 +6,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common import exceptions as EX
+from selenium.webdriver.chrome.options import Options
 
 import lxml.html as html
 import sys
@@ -18,14 +19,23 @@ __author__ = 'Pavan Mahalingam'
 # opens a Selenium driven Firefox window
 def get_driver():
     if g_browser == 'Chrome':
+        l_option = Options()
+        #l_option.add_argument('headless')
+        l_option.add_argument('disable-notifications')
+
+        #.AddArgument("start-maximized")
+        #l_option.add_argument('start-maximized')
+
+        #l_option.binary_location = '/home/fi11222/Headless_Chromium/headless_shell'
+
         # Create a new instance of the Firefox driver
-        l_driver = webdriver.Chrome()
+        l_driver = webdriver.Chrome(chrome_options=l_option)
 
         # Resize the window to the screen width/height
         l_driver.set_window_size(1200, 1100)
 
         # Move the window to position x/y
-        l_driver.set_window_position(800, 0)
+        l_driver.set_window_position(400, 0)
     elif g_browser == 'Firefox':
         # Create a new instance of the Firefox driver
         l_driver = webdriver.Firefox()
@@ -259,6 +269,7 @@ def get_profile_ff(p_driver):
 
             l_baseName = '{0:03}-'.format(l_iter_disp) + l_id
             p_driver.get_screenshot_as_file(l_baseName + '.png')
+            #l_story.screenshot(l_baseName + '_.png')
 
             #l_story.screenshot(l_baseName + '_.png')
             with open(l_baseName + '.xml', "w") as l_xml_file:
