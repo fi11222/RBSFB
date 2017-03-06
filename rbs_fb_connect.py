@@ -140,7 +140,7 @@ class BrowserDriver:
 
         self.m_logger.info("presence of more_pager_pagelet_")
 
-        l_expansionCount = 4
+        l_expansionCount = EcAppParam.gcm_expansionCount
 
         while True:
             l_pagers_found = 0

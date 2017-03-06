@@ -32,6 +32,7 @@ class EcAppParam:
     gcm_mailSenderPassword = LocalParam.gcm_mailSenderPassword
     gcm_browser = LocalParam.gcm_browser
     gcm_headless = LocalParam.gcm_headless
+    gcm_expansionCount = LocalParam.gcm_expansionCount
 
     #: Static files root (copied from :any:`LocalParam`)
     gcm_staticRoot = LocalParam.gcm_appRoot
