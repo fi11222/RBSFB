@@ -8,6 +8,8 @@ from selenium.webdriver.common.by import By
 from selenium.common import exceptions as EX
 from selenium.webdriver.chrome.options import Options
 
+from pyvirtualdisplay import Display
+
 import lxml.html as html
 import sys
 
@@ -16,82 +18,210 @@ from ec_utilities import *
 __author__ = 'Pavan Mahalingam'
 
 
-# opens a Selenium driven Firefox window
-def get_driver():
-    if g_browser == 'Chrome':
-        l_option = Options()
-        #l_option.add_argument('headless')
-        l_option.add_argument('disable-notifications')
-
-        #.AddArgument("start-maximized")
-        #l_option.add_argument('start-maximized')
-
-        #l_option.binary_location = '/home/fi11222/Headless_Chromium/headless_shell'
-
-        # Create a new instance of the Firefox driver
-        l_driver = webdriver.Chrome(chrome_options=l_option)
-
-        # Resize the window to the screen width/height
-        l_driver.set_window_size(1200, 1100)
-
-        # Move the window to position x/y
-        l_driver.set_window_position(400, 0)
-    elif g_browser == 'Firefox':
-        # Create a new instance of the Firefox driver
-        l_driver = webdriver.Firefox()
-
-        # Resize the window to the screen width/height
-        l_driver.set_window_size(1200, 1100)
-
-        # Move the window to position x/y
-        l_driver.set_window_position(800, 0)
-    else:
-        # Create a new instance of the PhantomJS driver
-        l_driver = webdriver.PhantomJS()
-
-        # Resize the window to the screen width/height
-        l_driver.set_window_size(1200, 1100)
-
-    return l_driver
+class BrowserDriverException(Exception):
+    def __init__(self, p_msg):
+        self.m_msg = p_msg
 
 
-def login_as_scrape(p_user, p_passwd):
-    l_driver = get_driver()
+class BrowserDriver:
 
-    l_driver.get('http://www.facebook.com')
+    def __init__(self):
+        self.m_logger = logging.getLogger('BrowserDriver')
 
-    try:
-        l_userInput = WebDriverWait(l_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, '//td/input[@id="email"]')))
+        if EcAppParam.gcm_headless:
+            self.m_logger.info("Launching xvfb")
+            self.m_display = Display(visible=0, size=(EcAppParam.gcm_headlessWidth, EcAppParam.gcm_headlessHeight))
+            self.m_display.start()
+        else:
+            self.m_display = None
 
-        l_userInput.send_keys(p_user)
+        if EcAppParam.gcm_browser == 'Chrome':
+            l_option = Options()
 
-        l_pwdInput = WebDriverWait(l_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, '//td/input[@id="pass"]')))
+            l_option.add_argument('disable-notifications')
 
-        l_pwdInput.send_keys(p_passwd)
+            # Create a new instance of the Chrome driver
+            self.m_logger.info("Launching Chrome")
+            self.m_driver = webdriver.Chrome(chrome_options=l_option)
 
-        # loginbutton
-        l_driver.find_element_by_xpath('//label[@id="loginbutton"]/input').click()
+            if not EcAppParam.gcm_headless:
+                # Resize the window to the screen width/height
+                self.m_driver.set_window_size(1200, 1100)
+                # Move the window to position x/y
+                self.m_driver.set_window_position(400, 0)
 
-        # wait for mainContainer
-        WebDriverWait(l_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
-    except EX.TimeoutException:
-        print('Did not find user ID input or post-login mainContainer')
-        return None
+        elif EcAppParam.gcm_browser == 'Firefox':
+            # Create a new instance of the Firefox driver
+            self.m_logger.info("Launching Firefox")
+            self.m_driver = webdriver.Firefox()
 
-    return l_driver
+            if not EcAppParam.gcm_headless:
+                # Resize the window to the screen width/height
+                self.m_driver.set_window_size(1200, 1100)
+                # Move the window to position x/y
+                self.m_driver.set_window_position(800, 0)
+        else:
+            l_message = '[BrowserDriver] Browser type not supported: {0}'.format(EcAppParam.gcm_browser)
+            self.m_logger.critical(l_message)
+            raise BrowserDriverException(l_message)
 
-# get a unique element attribute through lxml, with a warning mark ('¤')
-# inside the string if more than one was found
-def get_unique_attr(p_frag, p_xpath, p_attribute):
-    return '¤'.join([str(l_span.get(p_attribute)) for l_span in p_frag.xpath(p_xpath)]).strip()
 
-# get a unique text element through lxml, with a warning mark ('¤')
-# inside the string if more than one was found
-def get_unique(p_frag, p_xpath):
-    return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
+    def close(self):
+        self.m_driver.close()
+
+        if self.m_display is not None:
+            self.m_display.stop()
+
+    def login_as_scrape(self, p_user, p_passwd):
+        # load logging page
+        self.m_driver.get('http://www.facebook.com')
+
+        try:
+            l_userInput = WebDriverWait(self.m_driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, '//td/input[@id="email"]')))
+
+            l_userInput.send_keys(p_user)
+
+            l_pwdInput = WebDriverWait(self.m_driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, '//td/input[@id="pass"]')))
+
+            l_pwdInput.send_keys(p_passwd)
+
+            # loginbutton
+            self.m_driver.find_element_by_xpath('//label[@id="loginbutton"]/input').click()
+
+            # wait for mainContainer
+            WebDriverWait(self.m_driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
+        except EX.TimeoutException:
+            self.m_logger.critical('Did not find user ID input or post-login mainContainer')
+            raise
+
+    @staticmethod
+    def get_unique_attr(p_frag, p_xpath, p_attribute):
+        """
+        get a unique element attribute through lxml, with a warning mark ('¤')
+        inside the string if more than one was found
+
+        :param p_frag: lxml fragment from which to extract the value
+        :param p_xpath: XPath pointing to the element
+        :param p_attribute: Attribute name
+        :return: Attribute value with possible warning mark ('¤') if more than one found
+        """
+        return '¤'.join([str(l_span.get(p_attribute)) for l_span in p_frag.xpath(p_xpath)]).strip()
+
+    # get a unique text element through lxml, with a warning mark ('¤')
+    # inside the string if more than one was found
+    @staticmethod
+    def get_unique(p_frag, p_xpath):
+        """
+        get a unique text element through lxml, with a warning mark ('¤')
+        inside the string if more than one was found
+
+        :param p_frag: lxml fragment from which to extract the value
+        :param p_xpath: XPath pointing to the element
+        :return: Text content of the element with possible warning mark ('¤') if more than one found
+        """
+        return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
+
+
+    def get_fb_profile(self):
+        self.m_logger.info("get_profile()")
+
+        WebDriverWait(self.m_driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
+
+        self.m_logger.info("presence of hyperfeed_story_id_")
+
+        WebDriverWait(self.m_driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "more_pager_pagelet_")]')))
+
+        self.m_logger.info("presence of more_pager_pagelet_")
+
+        l_expansionCount = 3
+
+        while True:
+            l_pagers_found = 0
+            l_last_pager = None
+            for l_last_pager in self.m_driver.find_elements_by_xpath('//div[contains(@id, "more_pager_pagelet_")]'):
+                l_pagers_found += 1
+
+            self.m_logger.info('Expanding pager #{0}'.format(l_pagers_found))
+            if l_last_pager is not None:
+                self.m_driver.execute_script("return arguments[0].scrollIntoView();", l_last_pager)
+
+            if l_pagers_found >= l_expansionCount:
+                break
+
+        l_stab_iter = 0
+        while True:
+            l_finished = True
+            for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
+                try:
+                    l_data_ft = l_story.get_attribute('data-ft')
+
+                    if l_data_ft is not None:
+                        l_finished = False
+                except EX.StaleElementReferenceException:
+                    continue
+
+            self.m_logger.info('Stab loop #{0}'.format(l_stab_iter))
+            l_stab_iter += 1
+            if l_finished:
+                break
+
+        self.m_driver.execute_script('window.scrollTo(0, 0);')
+        l_curY = 0
+        l_iter_disp = 0
+        for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
+            try:
+                l_html = l_story.get_attribute('outerHTML')
+                l_id = l_story.get_attribute('id')
+                l_id = re.sub('hyperfeed_story_id_', '', l_id).strip()
+                # extract a full xml/html tree from the page
+                l_tree = html.fromstring(l_html)
+
+                # class="_5ptz"
+                l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
+                l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
+
+                l_htmlShort = l_html[:500]
+                if len(l_html) != len(l_htmlShort):
+                    l_htmlShort += '...'
+                print("-------- {0} --------\n{1}".format(l_iter_disp, l_htmlShort))
+
+                l_location = l_story.location
+
+                print('Id       : ' + l_id)
+                print('Date     : ' + l_date)
+                print('From     : ' + l_from)
+                print('Location : {0}'.format(l_location))
+                print('l_curY   : {0}'.format(l_curY))
+
+                l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
+                l_deltaY = l_yTop - l_curY
+                l_curY = l_yTop
+
+                print('l_yTop   : {0}'.format(l_yTop))
+                print('l_deltaY : {0}'.format(l_deltaY))
+
+                #p_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
+                #p_driver.execute_script("window.scrollBy(0, -100);")
+                self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
+                WebDriverWait(self.m_driver, 15).until(EC.visibility_of(l_story))
+
+                l_baseName = '{0:03}-'.format(l_iter_disp) + l_id
+                self.m_driver.get_screenshot_as_file(l_baseName + '.png')
+                #l_story.screenshot(l_baseName + '_.png')
+
+                #l_story.screenshot(l_baseName + '_.png')
+                with open(l_baseName + '.xml', "w") as l_xml_file:
+                    l_xml_file.write(l_html)
+
+                l_iter_disp += 1
+            except EX.StaleElementReferenceException:
+                print('***** STALE ! ******')
+
 
 def get_profile_pjs(p_driver):
     EcLogger.cm_logger.info("get_profile()")
@@ -156,8 +286,8 @@ def get_profile_pjs(p_driver):
             l_tree = html.fromstring(l_html)
 
             # class="_5ptz"
-            l_date = get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
-            l_from = get_unique(l_tree, '//a[contains(@class, "profileLink")]')
+            l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
+            l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
 
             l_htmlShort = l_html[:500]
             if len(l_html) != len(l_htmlShort):
@@ -181,105 +311,6 @@ def get_profile_pjs(p_driver):
 
     p_driver.quit()
 
-def get_profile_ff(p_driver):
-    EcLogger.cm_logger.info("get_profile()")
-
-    WebDriverWait(p_driver, 15).until(
-        EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
-
-    EcLogger.cm_logger.info("presence of hyperfeed_story_id_")
-
-
-    WebDriverWait(p_driver, 15).until(
-        EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "more_pager_pagelet_")]')))
-
-    EcLogger.cm_logger.info("presence of more_pager_pagelet_")
-
-    l_expansionCount = 3
-
-    while True:
-        l_pagers_found = 0
-        l_last_pager = None
-        for l_last_pager in p_driver.find_elements_by_xpath('//div[contains(@id, "more_pager_pagelet_")]'):
-            l_pagers_found += 1
-
-        EcLogger.cm_logger.info('Expanding pager #{0}'.format(l_pagers_found))
-        if l_last_pager is not None:
-            p_driver.execute_script("return arguments[0].scrollIntoView();", l_last_pager)
-
-        if l_pagers_found >= l_expansionCount:
-            break
-
-    l_stab_iter = 0
-    while True:
-        l_finished = True
-        for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
-            try:
-                l_data_ft = l_story.get_attribute('data-ft')
-
-                if l_data_ft is not None:
-                    l_finished = False
-            except EX.StaleElementReferenceException:
-                continue
-
-        EcLogger.cm_logger.info('Stab loop #{0}'.format(l_stab_iter))
-        l_stab_iter += 1
-        if l_finished:
-            break
-
-    p_driver.execute_script('window.scrollTo(0, 0);')
-    l_curY = 0
-    l_iter_disp = 0
-    for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
-        try:
-            l_html = l_story.get_attribute('outerHTML')
-            l_id = l_story.get_attribute('id')
-            l_id = re.sub('hyperfeed_story_id_', '', l_id).strip()
-            # extract a full xml/html tree from the page
-            l_tree = html.fromstring(l_html)
-
-            # class="_5ptz"
-            l_date = get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
-            l_from = get_unique(l_tree, '//a[contains(@class, "profileLink")]')
-
-            l_htmlShort = l_html[:500]
-            if len(l_html) != len(l_htmlShort):
-                l_htmlShort += '...'
-            print("-------- {0} --------\n{1}".format(l_iter_disp, l_htmlShort))
-
-            l_location = l_story.location
-
-            print('Id       : ' + l_id)
-            print('Date     : ' + l_date)
-            print('From     : ' + l_from)
-            print('Location : {0}'.format(l_location))
-            print('l_curY   : {0}'.format(l_curY))
-
-            l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
-            l_deltaY = l_yTop - l_curY
-            l_curY = l_yTop
-
-            print('l_yTop   : {0}'.format(l_yTop))
-            print('l_deltaY : {0}'.format(l_deltaY))
-
-            #p_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
-            #p_driver.execute_script("window.scrollBy(0, -100);")
-            p_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
-            WebDriverWait(l_driver0, 15).until(EC.visibility_of(l_story))
-
-            l_baseName = '{0:03}-'.format(l_iter_disp) + l_id
-            p_driver.get_screenshot_as_file(l_baseName + '.png')
-            #l_story.screenshot(l_baseName + '_.png')
-
-            #l_story.screenshot(l_baseName + '_.png')
-            with open(l_baseName + '.xml', "w") as l_xml_file:
-                l_xml_file.write(l_html)
-
-            l_iter_disp += 1
-        except EX.StaleElementReferenceException:
-            print('***** STALE ! ******')
-
-    p_driver.quit()
 
 def old_1(p_driver):
     WebDriverWait(p_driver, 15).until(
@@ -299,8 +330,8 @@ def old_1(p_driver):
                 l_tree = html.fromstring(l_html)
 
                 # class="_5ptz"
-                l_date = get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
-                l_from = get_unique(l_tree, '//a[contains(@class, "profileLink")]')
+                l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
+                l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
 
                 l_data_ft = l_story.get_attribute('data-ft')
 
@@ -370,12 +401,9 @@ if __name__ == "__main__":
     l_phantomId = 'aziz.sharjahulmulk@gmail.com'
     l_phantomPwd = '15Eyyaka'
 
-    EcLogger.cm_logger.info("logging in ...")
-    l_driver0 = login_as_scrape(l_phantomId, l_phantomPwd)
+    l_driver = BrowserDriver()
+    l_driver.login_as_scrape(l_phantomId, l_phantomPwd)
+    l_driver.get_fb_profile()
 
-    if g_browser == 'Firefox' or g_browser == 'Chrome':
-        # noinspection PyTypeChecker
-        get_profile_ff(l_driver0)
-    else:
-        # noinspection PyTypeChecker
-        get_profile_pjs(l_driver0)
+    if EcAppParam.gcm_headless:
+        l_driver.close()

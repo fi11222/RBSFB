@@ -30,6 +30,8 @@ class EcAppParam:
     gcm_appRoot = LocalParam.gcm_appRoot
     gcm_gmailSmtp = LocalParam.gcm_gmailSmtp
     gcm_mailSenderPassword = LocalParam.gcm_mailSenderPassword
+    gcm_browser = LocalParam.gcm_browser
+    gcm_headless = LocalParam.gcm_headless
 
     #: Static files root (copied from :any:`LocalParam`)
     gcm_staticRoot = LocalParam.gcm_appRoot
@@ -75,3 +77,7 @@ class EcAppParam:
     gcm_mailRecipients = ['nicolas.reimen@gmail.com', 'nrtmp@free.fr']
     #: Location of CSV log file
     gcm_logFile = os.path.join(gcm_appRoot, 'Log/ec_log.csv')
+
+    # headless browser screen size
+    gcm_headlessWidth = 1200
+    gcm_headlessHeight = 2000
