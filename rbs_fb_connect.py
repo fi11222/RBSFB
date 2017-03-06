@@ -140,7 +140,7 @@ class BrowserDriver:
 
         self.m_logger.info("presence of more_pager_pagelet_")
 
-        l_expansionCount = 3
+        l_expansionCount = 4
 
         while True:
             l_pagers_found = 0
@@ -177,61 +177,73 @@ class BrowserDriver:
         l_iter_disp = 0
         for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
             try:
-                l_html = l_story.get_attribute('outerHTML')
-                l_id = l_story.get_attribute('id')
-                l_id = re.sub('hyperfeed_story_id_', '', l_id).strip()
-                # extract a full xml/html tree from the page
-                l_tree = html.fromstring(l_html)
-
-                # class="_5ptz"
-                l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
-                l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
-
-                l_htmlShort = l_html[:500]
-                if len(l_html) != len(l_htmlShort):
-                    l_htmlShort += '...'
-                print("-------- {0} --------\n{1}".format(l_iter_disp, l_htmlShort))
-
-                l_location = l_story.location
-                l_size = l_story.size
-
-                print('Id       : ' + l_id)
-                print('Date     : ' + l_date)
-                print('From     : ' + l_from)
-                print('Location : {0}'.format(l_location))
-                print('Size     : {0}'.format(l_size))
-                print('l_curY   : {0}'.format(l_curY))
-
-                l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
-                l_deltaY = l_yTop - l_curY
-                l_curY = l_yTop
-
-                print('l_yTop   : {0}'.format(l_yTop))
-                print('l_deltaY : {0}'.format(l_deltaY))
-
-                #p_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
-                #p_driver.execute_script("window.scrollBy(0, -100);")
-                self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
-                WebDriverWait(self.m_driver, 15).until(EC.visibility_of(l_story))
-
-                l_baseName = '{0:03}-'.format(l_iter_disp) + l_id
-
-                l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
-                x = l_location['x']
-                y = l_location['y']-l_yTop
-
-                l_img = l_img.crop((x, y, x+l_size['width'], y+l_size['height']))
-
-                l_img.save(l_baseName + '.png')
-                #self.m_driver.get_screenshot_as_file(l_baseName + '.png')
-                #l_story.screenshot(l_baseName + '_.png')
-
-                with open(l_baseName + '.xml', "w") as l_xml_file:
-                    l_xml_file.write(l_html)
+                l_curY = self.analyze_story(l_story,l_iter_disp, l_curY)
 
                 l_iter_disp += 1
             except EX.StaleElementReferenceException:
                 print('***** STALE ! ******')
+
+    def analyze_story(self, p_story, p_iter, p_curY):
+        l_html = p_story.get_attribute('outerHTML')
+        l_id = p_story.get_attribute('id')
+        l_id = re.sub('hyperfeed_story_id_', '', l_id).strip()
+
+        # extract a full xml/html tree from the page
+        l_tree = html.fromstring(l_html)
+
+        # class="_5ptz"
+        l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
+
+        l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
+        if len(l_from) == 0:
+            l_from = BrowserDriver.get_unique(l_tree, '//h5/span/span/a')
+
+        l_sponsored = (len(l_tree.xpath('.//a[text()="Sponsored"]')) > 0)
+
+        l_htmlShort = l_html[:500]
+        if len(l_html) != len(l_htmlShort):
+            l_htmlShort += '...'
+        print("-------- {0} --------\n{1}".format(p_iter, l_htmlShort))
+
+        l_location = p_story.location
+        l_size = p_story.size
+
+        print('Id        : ' + l_id)
+        print('Sponsored : ' + repr(l_sponsored))
+        print('Date      : ' + l_date)
+        print('From      : ' + l_from)
+        print('Location  : {0}'.format(l_location))
+        print('Size      : {0}'.format(l_size))
+        print('l_curY    : {0}'.format(p_curY))
+
+        l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
+        l_deltaY = l_yTop - p_curY
+        l_curY = l_yTop
+
+        print('l_yTop    : {0}'.format(l_yTop))
+        print('l_deltaY  : {0}'.format(l_deltaY))
+
+        # p_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
+        # p_driver.execute_script("window.scrollBy(0, -100);")
+        self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
+        WebDriverWait(self.m_driver, 15).until(EC.visibility_of(p_story))
+
+        l_baseName = '{0:03}-'.format(p_iter) + l_id
+
+        l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+        x = l_location['x']
+        y = l_location['y'] - l_yTop
+
+        l_img = l_img.crop((x, y, x + l_size['width'], y + l_size['height']))
+
+        l_img.save(l_baseName + '.png')
+        # self.m_driver.get_screenshot_as_file(l_baseName + '.png')
+        # l_story.screenshot(l_baseName + '_.png')
+
+        with open(l_baseName + '.xml', "w") as l_xml_file:
+            l_xml_file.write(l_html)
+
+        return l_curY
 
 
 def get_profile_pjs(p_driver):
