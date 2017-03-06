@@ -9,9 +9,11 @@ from selenium.common import exceptions as EX
 from selenium.webdriver.chrome.options import Options
 
 from pyvirtualdisplay import Display
+from PIL import Image
 
 import lxml.html as html
 import sys
+import io
 
 from ec_utilities import *
 
@@ -191,11 +193,13 @@ class BrowserDriver:
                 print("-------- {0} --------\n{1}".format(l_iter_disp, l_htmlShort))
 
                 l_location = l_story.location
+                l_size = l_story.size
 
                 print('Id       : ' + l_id)
                 print('Date     : ' + l_date)
                 print('From     : ' + l_from)
                 print('Location : {0}'.format(l_location))
+                print('Size     : {0}'.format(l_size))
                 print('l_curY   : {0}'.format(l_curY))
 
                 l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
@@ -211,10 +215,17 @@ class BrowserDriver:
                 WebDriverWait(self.m_driver, 15).until(EC.visibility_of(l_story))
 
                 l_baseName = '{0:03}-'.format(l_iter_disp) + l_id
-                self.m_driver.get_screenshot_as_file(l_baseName + '.png')
+
+                l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+                x = l_location['x']
+                y = l_location['y']-l_yTop
+
+                l_img = l_img.crop((x, y, x+l_size['width'], y+l_size['height']))
+
+                l_img.save(l_baseName + '.png')
+                #self.m_driver.get_screenshot_as_file(l_baseName + '.png')
                 #l_story.screenshot(l_baseName + '_.png')
 
-                #l_story.screenshot(l_baseName + '_.png')
                 with open(l_baseName + '.xml', "w") as l_xml_file:
                     l_xml_file.write(l_html)
 
