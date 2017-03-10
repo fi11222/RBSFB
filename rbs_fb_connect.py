@@ -47,10 +47,10 @@ class BrowserDriver:
             self.m_driver = webdriver.Chrome(chrome_options=l_option)
 
             if not EcAppParam.gcm_headless:
-                # Resize the window to the screen width/height
-                self.m_driver.set_window_size(1200, 1100)
                 # Move the window to position x/y
-                self.m_driver.set_window_position(400, 0)
+                self.m_driver.set_window_position(700, 0)
+                # Resize the window to the screen width/height
+                self.m_driver.set_window_size(1200, 1000)
 
         elif EcAppParam.gcm_browser == 'Firefox':
             # Create a new instance of the Firefox driver
@@ -59,7 +59,7 @@ class BrowserDriver:
 
             if not EcAppParam.gcm_headless:
                 # Resize the window to the screen width/height
-                self.m_driver.set_window_size(1200, 1100)
+                self.m_driver.set_window_size(1200, 1000)
                 # Move the window to position x/y
                 self.m_driver.set_window_position(800, 0)
         else:
@@ -208,12 +208,16 @@ class BrowserDriver:
         l_location = p_story.location
         l_size = p_story.size
 
+        if l_location['x'] == 0 or l_location['y'] == p_curY:
+            self.m_logger.info('Location anomaly: {0}'.format(l_location))
+            return p_curY
+
         print('Id        : ' + l_id)
         print('Sponsored : ' + repr(l_sponsored))
         print('Date      : ' + l_date)
         print('From      : ' + l_from)
-        print('Location  : {0}'.format(l_location))
         print('Size      : {0}'.format(l_size))
+        print('Location  : {0}'.format(l_location))
         print('l_curY    : {0}'.format(p_curY))
 
         l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
@@ -222,9 +226,8 @@ class BrowserDriver:
 
         print('l_yTop    : {0}'.format(l_yTop))
         print('l_deltaY  : {0}'.format(l_deltaY))
+        print('*** scrollBy(l_deltaY) ***')
 
-        # p_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
-        # p_driver.execute_script("window.scrollBy(0, -100);")
         self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
         WebDriverWait(self.m_driver, 15).until(EC.visibility_of(p_story))
 
