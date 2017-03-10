@@ -14,6 +14,7 @@ from PIL import Image
 import lxml.html as html
 import sys
 import io
+import random
 
 from ec_utilities import *
 
@@ -26,6 +27,32 @@ class BrowserDriverException(Exception):
 
 
 class BrowserDriver:
+    @staticmethod
+    def get_unique_attr(p_frag, p_xpath, p_attribute):
+        """
+        get a unique element attribute through lxml, with a warning mark ('¤')
+        inside the string if more than one was found
+
+        :param p_frag: lxml fragment from which to extract the value
+        :param p_xpath: XPath pointing to the element
+        :param p_attribute: Attribute name
+        :return: Attribute value with possible warning mark ('¤') if more than one found
+        """
+        return '¤'.join([str(l_span.get(p_attribute)) for l_span in p_frag.xpath(p_xpath)]).strip()
+
+    # get a unique text element through lxml, with a warning mark ('¤')
+    # inside the string if more than one was found
+    @staticmethod
+    def get_unique(p_frag, p_xpath):
+        """
+        get a unique text element through lxml, with a warning mark ('¤')
+        inside the string if more than one was found
+
+        :param p_frag: lxml fragment from which to extract the value
+        :param p_xpath: XPath pointing to the element
+        :return: Text content of the element with possible warning mark ('¤') if more than one found
+        """
+        return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
 
     def __init__(self):
         self.m_logger = logging.getLogger('BrowserDriver')
@@ -67,7 +94,6 @@ class BrowserDriver:
             self.m_logger.critical(l_message)
             raise BrowserDriverException(l_message)
 
-
     def close(self):
         self.m_driver.close()
 
@@ -99,33 +125,57 @@ class BrowserDriver:
             self.m_logger.critical('Did not find user ID input or post-login mainContainer')
             raise
 
-    @staticmethod
-    def get_unique_attr(p_frag, p_xpath, p_attribute):
-        """
-        get a unique element attribute through lxml, with a warning mark ('¤')
-        inside the string if more than one was found
+    def go_random(self):
+        l_connect = psycopg2.connect(
+            host=EcAppParam.gcm_dbServer,
+            database=EcAppParam.gcm_dbDatabase,
+            user=EcAppParam.gcm_dbUser,
+            password=EcAppParam.gcm_dbPassword
+        )
 
-        :param p_frag: lxml fragment from which to extract the value
-        :param p_xpath: XPath pointing to the element
-        :param p_attribute: Attribute name
-        :return: Attribute value with possible warning mark ('¤') if more than one found
-        """
-        return '¤'.join([str(l_span.get(p_attribute)) for l_span in p_frag.xpath(p_xpath)]).strip()
+        # TB_USER row count
+        l_query = """
+                    select count(1)
+                    from
+                        "TB_USER"
+                    ;"""
 
-    # get a unique text element through lxml, with a warning mark ('¤')
-    # inside the string if more than one was found
-    @staticmethod
-    def get_unique(p_frag, p_xpath):
-        """
-        get a unique text element through lxml, with a warning mark ('¤')
-        inside the string if more than one was found
+        l_cursor = l_connect.cursor()
+        l_cursor.execute(l_query)
+        for l_count, in l_cursor:
+            pass
 
-        :param p_frag: lxml fragment from which to extract the value
-        :param p_xpath: XPath pointing to the element
-        :return: Text content of the element with possible warning mark ('¤') if more than one found
-        """
-        return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
+        # choose random row
+        l_row_choice = random.randrange(l_count)
 
+        self.m_logger.info('User count: {0}'.format(l_count))
+        self.m_logger.info('Row choice: {0}'.format(l_row_choice))
+
+        # retrieve ID of chosen row
+        l_query = """
+                    select "ID"
+                    from
+                        "TB_USER"
+                    offset {0};""".format(l_row_choice)
+
+        l_cursor = l_connect.cursor()
+        l_cursor.execute(l_query)
+        for l_id, in l_cursor:
+            pass
+
+        self.m_logger.info('ID: {0}'.format(l_id))
+        l_connect.close()
+
+        self.m_driver.get('http://www.facebook.com/{0}'.format(l_id))
+        try:
+            # wait for mainContainer
+            WebDriverWait(self.m_driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
+        except EX.TimeoutException:
+            self.m_logger.critical('Did not find user ID input or post-login mainContainer')
+            raise
+
+        self.m_logger.info('user page for ID [{0}] loaded'.format(l_id))
 
     def get_fb_profile(self):
         self.m_logger.info("get_profile()")
@@ -194,11 +244,75 @@ class BrowserDriver:
         # class="_5ptz"
         l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
 
-        l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
+        # determining from
+        l_from = []
+        l_fromDict = dict()
+        l_containsPhoto = False
+        for l_profLink in l_tree.xpath('//a[contains(@class, "profileLink")]'):
+            l_fromName =  l_profLink.text_content()
+
+            l_fromUser = l_profLink.get('href')
+            if l_fromUser is not None and len(l_fromUser) > 0:
+                # 'https\:\/\/www\.facebook\.com\/Sergei1970sk'
+                # https://www.facebook.com/solanki.jagdish.75098?hc_ref=NEWSFEED
+                if re.search('\.php\?id\=', l_fromUser):
+                    l_match = re.search('\.php\?id\=(\d+)(\&|$)', l_fromUser)
+                    if l_match:
+                        l_fromUser = l_match.group(1)
+                else:
+                    l_match = re.search('\.com/([^\?]+)(\?|$)', l_fromUser)
+                    if l_match:
+                        l_fromUser = l_match.group(1)
+
+            l_fromId = l_profLink.get('data-hovercard')
+            if l_fromId is not None and len(l_fromId) > 0:
+                l_match = re.search('\.php\?id\=(\d+)(\&|$)', l_fromId)
+                if l_match:
+                    l_fromId = l_match.group(1)
+
+            if l_fromName == 'photo' and l_fromId is None:
+                l_containsPhoto = True
+            #else:
+            l_from += [(l_fromName, l_fromId, l_fromUser)]
+            l_fromDict[l_fromId] = (l_fromName, l_fromUser)
+
+        #l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
         if len(l_from) == 0:
             l_from = BrowserDriver.get_unique(l_tree, '//h5/span/span/a')
 
+        l_containsPost = (len(l_tree.xpath('.//a[text()="post"]')) > 0)
         l_sponsored = (len(l_tree.xpath('.//a[text()="Sponsored"]')) > 0)
+
+        # determining type
+        l_fromHeader = BrowserDriver.get_unique(l_tree, '//h5[contains(@class, "_5vra")]')
+        l_fromHeaderSub = BrowserDriver.get_unique(l_tree, '//h6[contains(@class, "_5vra")]')
+
+        l_hasWith = False
+        if re.search('with', l_fromHeader) or re.search('with', l_fromHeaderSub):
+            l_hasWith = True
+
+        l_type = 'post'
+        if l_sponsored:
+            l_type = 'sponsored'
+        else:
+            if re.search('shared', l_fromHeader):
+                l_type = 'share'
+                if l_containsPhoto:
+                    l_type += '/photo'
+                elif l_containsPost:
+                    l_type += '/post'
+            elif re.search('liked', l_fromHeader):
+                l_type = 'like'
+            elif re.search('commented on this', l_fromHeader):
+                l_type = 'comment'
+            else:
+                l_fromHeader2 = BrowserDriver.get_unique(l_tree, '//div[contains(@class, "fwn fcg")]')
+                # <div class="fwn fcg"><span class="fwb fcb">People you may know</span></div>
+                if re.search('People you may know', l_fromHeader2):
+                    l_type = 'FB/PYMK'
+
+        if l_hasWith:
+            l_type += '/with'
 
         l_htmlShort = l_html[:500]
         if len(l_html) != len(l_htmlShort):
@@ -212,20 +326,24 @@ class BrowserDriver:
             self.m_logger.info('Location anomaly: {0}'.format(l_location))
             return p_curY
 
-        print('Id        : ' + l_id)
-        print('Sponsored : ' + repr(l_sponsored))
-        print('Date      : ' + l_date)
-        print('From      : ' + l_from)
-        print('Size      : {0}'.format(l_size))
-        print('Location  : {0}'.format(l_location))
-        print('l_curY    : {0}'.format(p_curY))
-
         l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
         l_deltaY = l_yTop - p_curY
         l_curY = l_yTop
 
-        print('l_yTop    : {0}'.format(l_yTop))
-        print('l_deltaY  : {0}'.format(l_deltaY))
+        print('Id             : ' + l_id)
+        print('Sponsored      : ' + repr(l_sponsored))
+        print('Type           : ' + l_type)
+        print('Contains Photo : ' + repr(l_containsPhoto))
+        print('Contains Post  : ' + repr(l_containsPost))
+        print('Has with       : ' + repr(l_hasWith))
+        print('Date           : ' + l_date)
+        print('From           : ' + repr(l_from))
+        print('From (dict)    : ' + repr(l_fromDict))
+        print('Size           : {0}'.format(l_size))
+        print('Location       : {0}'.format(l_location))
+        print('l_curY         : {0}'.format(p_curY))
+        print('l_yTop         : {0}'.format(l_yTop))
+        print('l_deltaY       : {0}'.format(l_deltaY))
         print('*** scrollBy(l_deltaY) ***')
 
         self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
@@ -385,6 +503,8 @@ if __name__ == "__main__":
     print('| v. 1.0 - 28/02/2017                                        |')
     print('+------------------------------------------------------------+')
 
+    random.seed()
+
     # mailer init
     EcMailer.init_mailer()
 
@@ -429,6 +549,7 @@ if __name__ == "__main__":
 
     l_driver = BrowserDriver()
     l_driver.login_as_scrape(l_phantomId, l_phantomPwd)
+    l_driver.go_random()
     l_driver.get_fb_profile()
 
     if EcAppParam.gcm_headless:
