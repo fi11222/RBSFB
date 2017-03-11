@@ -301,66 +301,77 @@ class BrowserDriver:
         l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
         l_deltaY = l_yTop - p_curY
         l_curY = l_yTop
+        l_overshoot = l_location['y'] + l_size['height'] + 50
 
-        self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_location['y'] + l_size['height'] + 50))
+        self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_overshoot))
         self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTop))
         #self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
         WebDriverWait(self.m_driver, 15).until(EC.visibility_of(p_story))
 
+        l_dataWait = 0
         while True:
             l_data_ft = p_story.get_attribute('data-ft')
             if l_data_ft is None:
                 break
             else:
+                l_dataWait += 1
                 print('l_data_ft: ' + l_data_ft)
 
-        #l_tmp_scroll = l_size['height'] + 50
-        #self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_tmp_scroll))
-        #self.m_driver.execute_script('window.scrollBy(0, {0});'.format(-l_tmp_scroll))
+            if l_dataWait > 30:
+                return p_curY
 
         # extract a full xml/html tree from the page
         l_tree = html.fromstring(l_html)
 
-        # class="_5ptz"
+        # Date(s)
         l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
 
+        # extract text
+        l_postText = BrowserDriver.get_unique(l_tree,
+            '//div[contains(@class, "userContent") and not(contains(@class, "userContentWrapper"))]')
+
         # determining from
+        l_shareTypes = ['photo', 'post', 'link', 'event', 'video']
         l_from = []
         l_fromDict = dict()
-        l_containsPhoto = False
-        for l_profLink in l_tree.xpath('//a[contains(@class, "profileLink")]'):
-            l_fromName =  l_profLink.text_content()
+        for l_xpath in ['//div[contains(@class, "_5x46")]//a[contains(@class, "profileLink")]', '//h5/span/span/a']:
+            for l_profLink in l_tree.xpath(l_xpath):
+                l_fromName =  l_profLink.text_content()
 
-            l_fromUser = l_profLink.get('href')
-            if l_fromUser is not None and len(l_fromUser) > 0:
-                # 'https\:\/\/www\.facebook\.com\/Sergei1970sk'
-                # https://www.facebook.com/solanki.jagdish.75098?hc_ref=NEWSFEED
-                if re.search('\.php\?id\=', l_fromUser):
-                    l_match = re.search('\.php\?id\=(\d+)(\&|$)', l_fromUser)
+                l_fromUser = l_profLink.get('href')
+                if l_fromUser is not None and len(l_fromUser) > 0:
+                    # 'https\:\/\/www\.facebook\.com\/Sergei1970sk'
+                    # https://www.facebook.com/solanki.jagdish.75098?hc_ref=NEWSFEED
+                    if re.search('\.php\?id\=', l_fromUser):
+                        l_match = re.search('\.php\?id\=(\d+)(\&|$)', l_fromUser)
+                        if l_match:
+                            l_fromUser = l_match.group(1)
+                    else:
+                        l_match = re.search('\.com/([^\?]+)(\?|$)', l_fromUser)
+                        if l_match:
+                            l_fromUser = l_match.group(1)
+
+                l_fromId = l_profLink.get('data-hovercard')
+                if l_fromId is not None and len(l_fromId) > 0:
+                    l_match = re.search('\.php\?id\=(\d+)(\&|$)', l_fromId)
                     if l_match:
-                        l_fromUser = l_match.group(1)
-                else:
-                    l_match = re.search('\.com/([^\?]+)(\?|$)', l_fromUser)
-                    if l_match:
-                        l_fromUser = l_match.group(1)
+                        l_fromId = l_match.group(1)
 
-            l_fromId = l_profLink.get('data-hovercard')
-            if l_fromId is not None and len(l_fromId) > 0:
-                l_match = re.search('\.php\?id\=(\d+)(\&|$)', l_fromId)
-                if l_match:
-                    l_fromId = l_match.group(1)
+                if not(l_fromName in l_shareTypes and l_fromId is None):
+                    l_from += [(l_fromName, l_fromId, l_fromUser)]
+                    l_fromDict[l_fromId] = (l_fromName, l_fromUser)
 
-            if l_fromName == 'photo' and l_fromId is None:
-                l_containsPhoto = True
-            #else:
-            l_from += [(l_fromName, l_fromId, l_fromUser)]
-            l_fromDict[l_fromId] = (l_fromName, l_fromUser)
+            if len(l_from) > 0:
+                break
 
         #l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
-        if len(l_from) == 0:
-            l_from = BrowserDriver.get_unique(l_tree, '//h5/span/span/a')
 
-        l_containsPost = (len(l_tree.xpath('.//a[text()="post"]')) > 0)
+        # _5vra --> post header
+        l_sharedList = []
+        for l_type in l_shareTypes:
+            for l in l_tree.xpath('.//h5[contains(@class, "_5vra")]//a[text()="{0}"]'.format(l_type)):
+                l_sharedList.append((l_type, l.get('href')))
+
         l_sponsored = (len(l_tree.xpath('.//a[text()="Sponsored"]')) > 0)
 
         # determining type
@@ -375,16 +386,22 @@ class BrowserDriver:
         if l_sponsored:
             l_type = 'sponsored'
         else:
-            if re.search('shared', l_fromHeader):
-                l_type = 'share'
-                if l_containsPhoto:
-                    l_type += '/photo'
-                elif l_containsPost:
-                    l_type += '/post'
-            elif re.search('liked', l_fromHeader):
-                l_type = 'like'
+            if re.search('shared|liked', l_fromHeader):
+                if re.search('shared', l_fromHeader):
+                    l_type = 'share'
+                else:
+                    l_type = 'like'
+
+                if len(l_sharedList) > 0:
+                    l_type += '/{0}'.format(l_sharedList[0][0])
             elif re.search('commented on this', l_fromHeader):
                 l_type = 'comment'
+            elif re.search('updated (his|her) profile picture', l_fromHeader):
+                l_type = 'narcissistic/PP'
+            elif re.search('updated (his|her) cover photo', l_fromHeader):
+                l_type = 'narcissistic/CP'
+            elif re.search('updated (his|her) profile video', l_fromHeader):
+                l_type = 'narcissistic/PV'
             else:
                 l_fromHeader2 = BrowserDriver.get_unique(l_tree, '//div[contains(@class, "fwn fcg")]')
                 # <div class="fwn fcg"><span class="fwb fcb">People you may know</span></div>
@@ -395,28 +412,31 @@ class BrowserDriver:
             l_type += '/with'
 
         print('Id             : ' + l_id)
+        print('l_fromHeader   : ' + l_fromHeader)
         print('Sponsored      : ' + repr(l_sponsored))
         print('Type           : ' + l_type)
-        print('Contains Photo : ' + repr(l_containsPhoto))
-        print('Contains Post  : ' + repr(l_containsPost))
+        print('Shared objects : ' + repr(l_sharedList))
         print('Has with       : ' + repr(l_hasWith))
         print('Date           : ' + l_date)
         print('From           : ' + repr(l_from))
         print('From (dict)    : ' + repr(l_fromDict))
+        print('Text           : ' + l_postText)
         print('Size           : {0}'.format(l_size))
         print('Location       : {0}'.format(l_location))
         print('l_curY         : {0}'.format(p_curY))
         print('l_yTop         : {0}'.format(l_yTop))
         print('l_deltaY       : {0}'.format(l_deltaY))
+        print('l_overshoot    : {0}'.format(l_overshoot))
         print('*** scrollBy(l_deltaY) ***')
 
+        # store html source and image of complete story
         l_baseName = '{0:03}-'.format(p_iter) + l_id
 
-        l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+        l_imgStory = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
         x = l_location['x']
         y = l_location['y'] - l_yTop
 
-        l_img = l_img.crop((x, y, x + l_size['width'], y + l_size['height']))
+        l_img = l_imgStory.crop((x, y, x + l_size['width'], y + l_size['height']))
 
         l_img.save(l_baseName + '.png')
         # self.m_driver.get_screenshot_as_file(l_baseName + '.png')
@@ -424,6 +444,34 @@ class BrowserDriver:
 
         with open(l_baseName + '.xml', "w") as l_xml_file:
             l_xml_file.write(l_html)
+
+        # extract images from the story
+        l_imgCount = 0
+        for l_xpath in ['.//div[./img[contains(@class, "img")]]', './/img[contains(@class, "img")]']:
+            for l_image in p_story.find_elements_by_xpath(l_xpath):
+                l_height = l_image.size['height']
+                l_width = l_image.size['width']
+                if l_width >= EcAppParam.gcm_minImageSize and l_height >= EcAppParam.gcm_minImageSize:
+                    l_htmlHeight = l_image.get_attribute('height')
+                    l_htmlwidth = l_image.get_attribute('width')
+
+                    print('[{0}] S:({1} {2}) H:({3} {4}): '.format(
+                            l_imgCount, l_width, l_height, l_htmlwidth, l_htmlHeight) +
+                          l_image.get_attribute('outerHTML'))
+
+                    #for i in range(0,10):
+                    #    print('Loaded: ' + repr(self.m_driver.execute_script('return arguments[0].complete', l_image)))
+
+                    l_img_location = l_image.location
+                    xi = l_img_location['x']
+                    yi = l_img_location['y'] - l_yTop
+
+                    l_imgInStory = l_imgStory.crop((xi, yi, xi + l_width, yi + l_height))
+                    l_imgInStory.save(l_baseName + '_{0:02}.png'.format(l_imgCount))
+                    l_imgCount += 1
+
+            if l_imgCount > 0:
+                break
 
         return l_curY
 

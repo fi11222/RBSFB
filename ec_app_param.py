@@ -83,3 +83,5 @@ class EcAppParam:
     # headless browser screen size
     gcm_headlessWidth = 1200
     gcm_headlessHeight = 2000
+
+    gcm_minImageSize = 100
