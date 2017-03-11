@@ -156,12 +156,14 @@ class BrowserDriver:
                     select "ID"
                     from
                         "TB_USER"
+                    order by
+                        "ID_INTERNAL"
                     offset {0};""".format(l_row_choice)
 
         l_cursor = l_connect.cursor()
         l_cursor.execute(l_query)
         for l_id, in l_cursor:
-            pass
+            break
 
         self.m_logger.info('ID: {0}'.format(l_id))
         l_connect.close()
@@ -178,12 +180,58 @@ class BrowserDriver:
         self.m_logger.info('user page for ID [{0}] loaded'.format(l_id))
 
     def get_fb_profile(self):
-        self.m_logger.info("get_profile()")
+        self.m_logger.info("get_fb_profile()")
+
+        l_storyPrefix = 'tl_unit_'
 
         WebDriverWait(self.m_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
+            EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "{0}")]'.format(l_storyPrefix))))
 
-        self.m_logger.info("presence of hyperfeed_story_id_")
+        self.m_logger.info('presence of {0}'.format(l_storyPrefix))
+
+        l_storyList = []
+        l_fruitlessTries = 0
+        l_curY = 0
+        l_storyCount = 0
+        while True:
+            l_fruitlessTry = True
+            print('###')
+            for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "{0}")]'.format(l_storyPrefix)):
+                try:
+                    l_id = l_story.get_attribute('id')
+                    if l_id not in l_storyList:
+                        l_fruitlessTry = False
+                        l_fruitlessTries = 0
+                        print('+++ ' + l_id)
+                        l_storyList.append(l_id)
+
+                        l_curY = self.analyze_story(l_story, l_storyCount, l_curY, p_storyPrefix=l_storyPrefix)
+
+                        #self.m_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
+                        #WebDriverWait(self.m_driver, 15).until(EC.visibility_of(l_story))
+
+                        l_storyCount += 1
+                    else:
+                        print('--- ' + l_id)
+                except EX.StaleElementReferenceException:
+                    continue
+
+            if l_fruitlessTry:
+                l_fruitlessTries += 1
+
+            if l_storyCount > EcAppParam.gcm_max_story_count or l_fruitlessTries > 3:
+                break
+
+
+    def get_fb_feed(self):
+        self.m_logger.info("get_fb_feed()")
+
+        l_storyPrefix = 'hyperfeed_story_id_'
+
+        WebDriverWait(self.m_driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "{0}")]'.format(l_storyPrefix))))
+
+        self.m_logger.info('presence of {0}'.format(l_storyPrefix))
 
         WebDriverWait(self.m_driver, 15).until(
             EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "more_pager_pagelet_")]')))
@@ -208,7 +256,7 @@ class BrowserDriver:
         l_stab_iter = 0
         while True:
             l_finished = True
-            for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
+            for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "{0}")]'.format(l_storyPrefix)):
                 try:
                     l_data_ft = l_story.get_attribute('data-ft')
 
@@ -225,18 +273,50 @@ class BrowserDriver:
         self.m_driver.execute_script('window.scrollTo(0, 0);')
         l_curY = 0
         l_iter_disp = 0
-        for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
+        for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "{0}")]'.format(l_storyPrefix)):
             try:
-                l_curY = self.analyze_story(l_story,l_iter_disp, l_curY)
+                l_curY = self.analyze_story(l_story, l_iter_disp, l_curY)
 
                 l_iter_disp += 1
             except EX.StaleElementReferenceException:
                 print('***** STALE ! ******')
 
-    def analyze_story(self, p_story, p_iter, p_curY):
+    def analyze_story(self, p_story, p_iter, p_curY, p_storyPrefix='hyperfeed_story_id_'):
         l_html = p_story.get_attribute('outerHTML')
+        l_htmlShort = l_html[:500]
+        if len(l_html) != len(l_htmlShort):
+            l_htmlShort += '...'
+        print("-------- {0} --------\n{1}".format(p_iter, l_htmlShort))
+
         l_id = p_story.get_attribute('id')
-        l_id = re.sub('hyperfeed_story_id_', '', l_id).strip()
+        l_id = re.sub(p_storyPrefix, '', l_id).strip()
+
+        l_location = p_story.location
+        l_size = p_story.size
+
+        if l_location['x'] == 0 or l_location['y'] == p_curY:
+            self.m_logger.info('Location anomaly: {0}'.format(l_location))
+            return p_curY
+
+        l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
+        l_deltaY = l_yTop - p_curY
+        l_curY = l_yTop
+
+        self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_location['y'] + l_size['height'] + 50))
+        self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTop))
+        #self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
+        WebDriverWait(self.m_driver, 15).until(EC.visibility_of(p_story))
+
+        while True:
+            l_data_ft = p_story.get_attribute('data-ft')
+            if l_data_ft is None:
+                break
+            else:
+                print('l_data_ft: ' + l_data_ft)
+
+        #l_tmp_scroll = l_size['height'] + 50
+        #self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_tmp_scroll))
+        #self.m_driver.execute_script('window.scrollBy(0, {0});'.format(-l_tmp_scroll))
 
         # extract a full xml/html tree from the page
         l_tree = html.fromstring(l_html)
@@ -314,22 +394,6 @@ class BrowserDriver:
         if l_hasWith:
             l_type += '/with'
 
-        l_htmlShort = l_html[:500]
-        if len(l_html) != len(l_htmlShort):
-            l_htmlShort += '...'
-        print("-------- {0} --------\n{1}".format(p_iter, l_htmlShort))
-
-        l_location = p_story.location
-        l_size = p_story.size
-
-        if l_location['x'] == 0 or l_location['y'] == p_curY:
-            self.m_logger.info('Location anomaly: {0}'.format(l_location))
-            return p_curY
-
-        l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
-        l_deltaY = l_yTop - p_curY
-        l_curY = l_yTop
-
         print('Id             : ' + l_id)
         print('Sponsored      : ' + repr(l_sponsored))
         print('Type           : ' + l_type)
@@ -345,9 +409,6 @@ class BrowserDriver:
         print('l_yTop         : {0}'.format(l_yTop))
         print('l_deltaY       : {0}'.format(l_deltaY))
         print('*** scrollBy(l_deltaY) ***')
-
-        self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
-        WebDriverWait(self.m_driver, 15).until(EC.visibility_of(p_story))
 
         l_baseName = '{0:03}-'.format(p_iter) + l_id
 

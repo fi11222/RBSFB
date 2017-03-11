@@ -33,6 +33,7 @@ class EcAppParam:
     gcm_browser = LocalParam.gcm_browser
     gcm_headless = LocalParam.gcm_headless
     gcm_expansionCount = LocalParam.gcm_expansionCount
+    gcm_max_story_count = LocalParam.gcm_max_story_count
 
     #: Static files root (copied from :any:`LocalParam`)
     gcm_staticRoot = LocalParam.gcm_appRoot
