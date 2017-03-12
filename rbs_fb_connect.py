@@ -324,17 +324,56 @@ class BrowserDriver:
         l_tree = html.fromstring(l_html)
 
         # Date(s)
-        l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
+        l_date = None
+        l_dateQuoted = []
+        for l_dateContainer in p_story.find_elements_by_xpath('.//abbr[contains(@class, "_5ptz")]'):
+            l_txtDt = l_dateContainer.get_attribute('title')
+            print('l_txtDt: ' + l_txtDt)
+            l_dt = datetime.datetime.strptime(l_txtDt, '%A, %d %B %Y at %H:%M')
+            if l_date is None:
+                l_date = l_dt
+            else:
+                l_dateQuoted.append(l_dt)
+
+        # l_date = BrowserDriver.get_unique_attr(l_tree, './/abbr[contains(@class, "_5ptz")]', 'title')
 
         # extract text
-        l_postText = BrowserDriver.get_unique(l_tree,
-            '//div[contains(@class, "userContent") and not(contains(@class, "userContentWrapper"))]')
+        l_postText = ''
+        for l_pt in p_story.find_elements_by_xpath(
+            './/div[contains(@class, "userContent") and not(contains(@class, "userContentWrapper"))]'):
+            l_ptHtml = l_pt.get_attribute('innerHTML')
+            if l_ptHtml is not None:
+                l_postText = re.sub('\<[^\>]+\>', ' ', l_ptHtml)
+                l_postText = re.sub('\s+', ' ', l_postText).strip()
+
+            if l_postText is not None and len(l_postText) > 0:
+                break
+
+        # extract quoted text
+        # _5r69 --> Quoted portion (normally) otherwise, class containing 'mtm'
+        l_quotedText = ''
+        for l_xpath in ['.//div[@class="_5r69"]', './/div[contains(@class, "mtm")]']:
+            # print('l_xpath: ' + l_xpath)
+            for l_quote in p_story.find_elements_by_xpath(l_xpath):
+                l_quoteHtml = l_quote.get_attribute('innerHTML')
+                # print('l_quoteHtml: ' + repr(l_quoteHtml)[:100])
+                if l_quoteHtml is not None:
+                    l_quotedText = re.sub('\<[^\>]+\>', ' ', l_quoteHtml)
+                    l_quotedText = re.sub('\s+', ' ', l_quotedText).strip()
+
+                if l_quotedText is not None and len(l_quotedText) > 0:
+                    break
+
+            if l_quotedText is not None and len(l_quotedText) > 0:
+                break
 
         # determining from
-        l_shareTypes = ['photo', 'post', 'link', 'event', 'video']
+        l_shareTypes = ['photo', 'post', 'link', 'event', 'video', 'live video']
         l_from = []
         l_fromDict = dict()
-        for l_xpath in ['//div[contains(@class, "_5x46")]//a[contains(@class, "profileLink")]', '//h5/span/span/a']:
+        # _5x46 --> post header
+        for l_xpath in ['//div[contains(@class, "_5x46")]//a[contains(@class, "profileLink")]',
+                        '//h5[contains(@class, "_5vra")]//a']:
             for l_profLink in l_tree.xpath(l_xpath):
                 l_fromName =  l_profLink.text_content()
 
@@ -357,7 +396,7 @@ class BrowserDriver:
                     if l_match:
                         l_fromId = l_match.group(1)
 
-                if not(l_fromName in l_shareTypes and l_fromId is None):
+                if not l_fromName in l_shareTypes:
                     l_from += [(l_fromName, l_fromId, l_fromUser)]
                     l_fromDict[l_fromId] = (l_fromName, l_fromUser)
 
@@ -366,7 +405,8 @@ class BrowserDriver:
 
         #l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
 
-        # _5vra --> post header
+        # shared object list
+        # _5vra --> part of the post header containing the names of the post authors
         l_sharedList = []
         for l_type in l_shareTypes:
             for l in l_tree.xpath('.//h5[contains(@class, "_5vra")]//a[text()="{0}"]'.format(l_type)):
@@ -411,16 +451,18 @@ class BrowserDriver:
         if l_hasWith:
             l_type += '/with'
 
-        print('Id             : ' + l_id)
         print('l_fromHeader   : ' + l_fromHeader)
+        print('Id             : ' + l_id)
         print('Sponsored      : ' + repr(l_sponsored))
         print('Type           : ' + l_type)
         print('Shared objects : ' + repr(l_sharedList))
         print('Has with       : ' + repr(l_hasWith))
-        print('Date           : ' + l_date)
+        print('Date           : ' + repr(l_date))
+        print('Dates quoted   : ' + repr(l_dateQuoted))
         print('From           : ' + repr(l_from))
         print('From (dict)    : ' + repr(l_fromDict))
         print('Text           : ' + l_postText)
+        print('Quoted Text    : ' + l_quotedText)
         print('Size           : {0}'.format(l_size))
         print('Location       : {0}'.format(l_location))
         print('l_curY         : {0}'.format(p_curY))
