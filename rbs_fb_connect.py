@@ -27,6 +27,13 @@ class BrowserDriverException(Exception):
 
 
 class BrowserDriver:
+    """
+    The class driving the data extraction process.
+
+    At instantiation, creates a Selenium Chrome driver and a headless (or non-headless) instance of chrome.
+    After that, all operations are handled by this class.
+    """
+
     @staticmethod
     def get_unique_attr(p_frag, p_xpath, p_attribute):
         """
@@ -55,18 +62,27 @@ class BrowserDriver:
         return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
 
     def __init__(self):
+        """
+        Instantiates Selenium WebDriver and Chrome instance. Chrome is headless or not
+        depending on the value of :any:`EcAppParam.gcm_headless` (boolean)
+        """
+        # instantiates class logger
         self.m_logger = logging.getLogger('BrowserDriver')
 
         if EcAppParam.gcm_headless:
+            # if headless mode requested, starts the pyvirtualdisplay xvfb driver
             self.m_logger.info("Launching xvfb")
             self.m_display = Display(visible=0, size=(EcAppParam.gcm_headlessWidth, EcAppParam.gcm_headlessHeight))
             self.m_display.start()
         else:
             self.m_display = None
 
+        # Launch Chrome (or Firefox) Webdriver
         if EcAppParam.gcm_browser == 'Chrome':
+            # option object to be passed to chrome
             l_option = Options()
 
+            # notification disabling option to be passed to Chrome
             l_option.add_argument('disable-notifications')
 
             # Create a new instance of the Chrome driver
@@ -95,52 +111,73 @@ class BrowserDriver:
             raise BrowserDriverException(l_message)
 
     def close(self):
+        """
+        Closing method. Closes Chrome and the associated WebDriver. If headless then also close xvfb.
+        :return: Nothing
+        """
         self.m_driver.close()
 
         if self.m_display is not None:
             self.m_display.stop()
 
     def login_as_scrape(self, p_user, p_passwd):
+        """
+        Logging-in method.
+
+        :param p_user: FB user ID
+        :param p_passwd: FB password
+        :return: nothing (if there were problems --> raise errors)
+        """
         # load logging page
         self.m_driver.get('http://www.facebook.com')
 
         try:
+            # wait for the presence of the user ID (or e-mail) text input field.
             l_userInput = WebDriverWait(self.m_driver, 15).until(
                 EC.presence_of_element_located((By.XPATH, '//td/input[@id="email"]')))
 
+            # sends the user ID string to it
             l_userInput.send_keys(p_user)
 
+            # wait for the presence of the user password (or e-mail) text input field.
             l_pwdInput = WebDriverWait(self.m_driver, 15).until(
                 EC.presence_of_element_located((By.XPATH, '//td/input[@id="pass"]')))
 
+            # sends the password string to it
             l_pwdInput.send_keys(p_passwd)
 
-            # loginbutton
+            # finds the log-in button and clicks it
             self.m_driver.find_element_by_xpath('//label[@id="loginbutton"]/input').click()
 
-            # wait for mainContainer
+            # wait for the presence of the `mainContainer` element, indicating post login page load
             WebDriverWait(self.m_driver, 15).until(
                 EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
         except EX.TimeoutException:
-            self.m_logger.critical('Did not find user ID input or post-login mainContainer')
+            self.m_logger.critical('Did not find user ID/pwd input or post-login mainContainer')
             raise
 
     def go_random(self):
-        l_connect = psycopg2.connect(
+        """
+        Selects a user ID from TB_USER and display its FB profile
+        :return: Nothing
+        """
+        # connects to the database
+        l_connect1 = psycopg2.connect(
             host=EcAppParam.gcm_dbServer,
             database=EcAppParam.gcm_dbDatabase,
             user=EcAppParam.gcm_dbUser,
             password=EcAppParam.gcm_dbPassword
         )
 
-        # TB_USER row count
+        # TB_USER total row count
+        l_count = 0
         l_query = """
                     select count(1)
                     from
                         "TB_USER"
                     ;"""
 
-        l_cursor = l_connect.cursor()
+        l_cursor = l_connect1.cursor()
         l_cursor.execute(l_query)
         for l_count, in l_cursor:
             pass
@@ -152,6 +189,7 @@ class BrowserDriver:
         self.m_logger.info('Row choice: {0}'.format(l_row_choice))
 
         # retrieve ID of chosen row
+        l_id = ''
         l_query = """
                     select "ID"
                     from
@@ -160,59 +198,86 @@ class BrowserDriver:
                         "ID_INTERNAL"
                     offset {0};""".format(l_row_choice)
 
-        l_cursor = l_connect.cursor()
+        l_cursor = l_connect1.cursor()
         l_cursor.execute(l_query)
         for l_id, in l_cursor:
             break
 
         self.m_logger.info('ID: {0}'.format(l_id))
-        l_connect.close()
+        # close database connection
+        l_connect1.close()
 
+        # go to the user's page and wait for the page to load
         self.m_driver.get('http://www.facebook.com/{0}'.format(l_id))
         try:
             # wait for mainContainer
             WebDriverWait(self.m_driver, 15).until(
                 EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
         except EX.TimeoutException:
-            self.m_logger.critical('Did not find user ID input or post-login mainContainer')
+            self.m_logger.critical('Did not find user\'s page mainContainer')
             raise
 
         self.m_logger.info('user page for ID [{0}] loaded'.format(l_id))
 
-    def get_fb_profile(self):
+    def get_fb_profile(self, p_isOwnFeed=False):
+        """
+        Downloads the profile of a user. Before calling this method, the user's page must already have been loaded.
+        :return: Nothing
+        """
         self.m_logger.info("get_fb_profile()")
 
+        # prefix in the id attribute for all stories blocks (different for user's page and own feed)
         l_storyPrefix = 'tl_unit_'
+        if p_isOwnFeed:
+            l_storyPrefix = 'hyperfeed_story_id_'
 
+        # wait for the presence of at least one such block
         WebDriverWait(self.m_driver, 15).until(
             EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "{0}")]'.format(l_storyPrefix))))
 
         self.m_logger.info('presence of {0}'.format(l_storyPrefix))
 
+        # repeat calls to analyze_story until no more stories can be obtained
+        # list of story ids to avoid processing them twice
         l_storyList = []
+        # a fruitless try occurs when no new stories could be found while scanning all stories on the page
         l_fruitlessTries = 0
+        # current y position of the top of the viewport
         l_curY = 0
+        # total number of stories retrieved so far
         l_storyCount = 0
-        while True:
+
+        # just in case
+        self.m_driver.execute_script('window.scrollTo(0, 0);')
+
+        while l_storyCount <= EcAppParam.gcm_max_story_count and l_fruitlessTries < 3:
+            # main loop will continue until the desired number of stories is reached or 3 fruitless
+            # tries have occurred
             l_fruitlessTry = True
-            print('###')
+            self.m_logger.info(
+                '### main loop. l_storyCount={0} l_fruitlessTries={1}'.format(l_storyCount, l_fruitlessTries))
             for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "{0}")]'.format(l_storyPrefix)):
+                # inner loop: scans all stories present on the page
                 try:
+                    # get the stories id attribute
                     l_id = l_story.get_attribute('id')
                     if l_id not in l_storyList:
+                        # if the story's id is not in the list --> it is a new one
+
+                        # so this cycle is not a fruitless try
                         l_fruitlessTry = False
                         l_fruitlessTries = 0
-                        print('+++ ' + l_id)
+
+                        # add the story's id to the list to avoid processing it again
                         l_storyList.append(l_id)
 
+                        # analyze the story (includes scrolling past the story block to trigger the loading
+                        # of new ones, if any). This call affects the current y position.
                         l_curY = self.analyze_story(l_story, l_storyCount, l_curY, p_storyPrefix=l_storyPrefix)
-
-                        #self.m_driver.execute_script("return arguments[0].scrollIntoView();", l_story)
-                        #WebDriverWait(self.m_driver, 15).until(EC.visibility_of(l_story))
 
                         l_storyCount += 1
                     else:
-                        print('--- ' + l_id)
+                        self.m_logger.debug('--- Story already analyzed: ' + l_id)
                 except EX.StaleElementReferenceException:
                     continue
 
@@ -222,8 +287,12 @@ class BrowserDriver:
             if l_storyCount > EcAppParam.gcm_max_story_count or l_fruitlessTries > 3:
                 break
 
+    def get_fb_feed_old(self):
+        """
+        Get the user's own feed
 
-    def get_fb_feed(self):
+        :return: Nothing
+        """
         self.m_logger.info("get_fb_feed()")
 
         l_storyPrefix = 'hyperfeed_story_id_'
@@ -272,42 +341,65 @@ class BrowserDriver:
 
         self.m_driver.execute_script('window.scrollTo(0, 0);')
         l_curY = 0
-        l_iter_disp = 0
+        l_iter_dispo = 0
         for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "{0}")]'.format(l_storyPrefix)):
             try:
-                l_curY = self.analyze_story(l_story, l_iter_disp, l_curY)
+                l_curY = self.analyze_story(l_story, l_iter_dispo, l_curY)
 
-                l_iter_disp += 1
+                l_iter_dispo += 1
             except EX.StaleElementReferenceException:
                 print('***** STALE ! ******')
 
     def analyze_story(self, p_story, p_iter, p_curY, p_storyPrefix='hyperfeed_story_id_'):
-        l_html = p_story.get_attribute('outerHTML')
-        l_htmlShort = l_html[:500]
-        if len(l_html) != len(l_htmlShort):
-            l_htmlShort += '...'
-        print("-------- {0} --------\n{1}".format(p_iter, l_htmlShort))
+        """
+        Story analysis method.
+        :param p_story: WebDriver element positioned on the story
+        :param p_iter: Story number (starting at 0)
+        :param p_curY: Current scrolling Y position in the browser
+        :param p_storyPrefix: Prefix of the `id` attribute of the story's outermost `<div>`
+        :return: the new y scroll value
+        """
 
+        l_html = p_story.get_attribute('outerHTML')
+
+        if EcAppParam.gcm_debugModeOn:
+            l_htmlShort = l_html[:500]
+            if len(l_html) != len(l_htmlShort):
+                l_htmlShort += '...'
+            print("-------- {0} --------\n{1}".format(p_iter, l_htmlShort))
+
+        # story ID without prefix
         l_id = p_story.get_attribute('id')
         l_id = re.sub(p_storyPrefix, '', l_id).strip()
 
+        # location and size
         l_location = p_story.location
         l_size = p_story.size
 
+        # detection of abnormal location parameters --> skip story
         if l_location['x'] == 0 or l_location['y'] == p_curY:
             self.m_logger.info('Location anomaly: {0}'.format(l_location))
             return p_curY
 
+        # calculation of scroll parameters
         l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
         l_deltaY = l_yTop - p_curY
         l_curY = l_yTop
         l_overshoot = l_location['y'] + l_size['height'] + 50
 
+        # first scroll to the bottom of the story (overshot) to trigger loading of next stories, if any
         self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_overshoot))
+        # then scroll to the top of the story
         self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTop))
-        #self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
+
+        # previous method with delta, kept for now in reserve
+        # self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
+
+        # waiting for story availability
+        # first wait for visibility DOM attribute
         WebDriverWait(self.m_driver, 15).until(EC.visibility_of(p_story))
 
+        # for safety's sake, wait for the absence of data-ft attribute
         l_dataWait = 0
         while True:
             l_data_ft = p_story.get_attribute('data-ft')
@@ -317,123 +409,151 @@ class BrowserDriver:
                 l_dataWait += 1
                 print('l_data_ft: ' + l_data_ft)
 
+            # maximum tries: 30 times
             if l_dataWait > 30:
                 return p_curY
 
-        # extract a full xml/html tree from the page
+        # build an lxml analyser out of the html
         l_tree = html.fromstring(l_html)
 
-        # Date(s)
+        # DATA: (1) Date(s)
         l_date = None
         l_dateQuoted = []
         for l_dateContainer in p_story.find_elements_by_xpath('.//abbr[contains(@class, "_5ptz")]'):
             l_txtDt = l_dateContainer.get_attribute('title')
-            print('l_txtDt: ' + l_txtDt)
             l_dt = datetime.datetime.strptime(l_txtDt, '%A, %d %B %Y at %H:%M')
+
+            if EcAppParam.gcm_debugModeOn:
+                print('l_txtDt: ' + l_txtDt)
+
             if l_date is None:
+                # first date found considered as main story date
                 l_date = l_dt
             else:
+                # other dates considered as coming from quoted parts (shared post, ...)
                 l_dateQuoted.append(l_dt)
 
-        # l_date = BrowserDriver.get_unique_attr(l_tree, './/abbr[contains(@class, "_5ptz")]', 'title')
-
-        # extract text
+        # DATA: (2) main text
         l_postText = ''
+        # text found in the 'userContent' marked section. But 'userContentWrapper' must be avoided
         for l_pt in p_story.find_elements_by_xpath(
-            './/div[contains(@class, "userContent") and not(contains(@class, "userContentWrapper"))]'):
+                './/div[contains(@class, "userContent") and not(contains(@class, "userContentWrapper"))]'):
             l_ptHtml = l_pt.get_attribute('innerHTML')
+
+            # removes html tags and replaces them with spaces
             if l_ptHtml is not None:
-                l_postText = re.sub('\<[^\>]+\>', ' ', l_ptHtml)
+                l_postText = re.sub('<[^>]+>', ' ', l_ptHtml)
                 l_postText = re.sub('\s+', ' ', l_postText).strip()
 
             if l_postText is not None and len(l_postText) > 0:
                 break
 
-        # extract quoted text
-        # _5r69 --> Quoted portion (normally) otherwise, class containing 'mtm'
+        # DATA: (3) quoted text
         l_quotedText = ''
+        # _5r69 --> Quoted portion (normally) otherwise, class containing 'mtm'
         for l_xpath in ['.//div[@class="_5r69"]', './/div[contains(@class, "mtm")]']:
-            # print('l_xpath: ' + l_xpath)
             for l_quote in p_story.find_elements_by_xpath(l_xpath):
                 l_quoteHtml = l_quote.get_attribute('innerHTML')
-                # print('l_quoteHtml: ' + repr(l_quoteHtml)[:100])
+
+                # removes html tags and replaces them with spaces
                 if l_quoteHtml is not None:
-                    l_quotedText = re.sub('\<[^\>]+\>', ' ', l_quoteHtml)
+                    l_quotedText = re.sub('<[^>]+>', ' ', l_quoteHtml)
                     l_quotedText = re.sub('\s+', ' ', l_quotedText).strip()
 
                 if l_quotedText is not None and len(l_quotedText) > 0:
                     break
 
+            # if _5r69 yielded tex, 'mtm' must not be used
             if l_quotedText is not None and len(l_quotedText) > 0:
                 break
 
-        # determining from
+        # DATA: (4) determining from
+        # types of shared documents (may be found in the same form as from authors and must thus be eliminated)
         l_shareTypes = ['photo', 'post', 'link', 'event', 'video', 'live video']
+        # list of author (no deduplication but order preserved)
         l_from = []
+        # dictionary of authors (deduplication but order lost)
         l_fromDict = dict()
-        # _5x46 --> post header
+        # _5x46 --> whole post header
+        # _5vra --> part of the post header containing the names of the post authors
+
+        # first case below correspond to multiple authors and the second to single authors
         for l_xpath in ['//div[contains(@class, "_5x46")]//a[contains(@class, "profileLink")]',
                         '//h5[contains(@class, "_5vra")]//a']:
             for l_profLink in l_tree.xpath(l_xpath):
+                # a. full name --> text content of the link
                 l_fromName =  l_profLink.text_content()
 
+                # b. FB user name
                 l_fromUser = l_profLink.get('href')
                 if l_fromUser is not None and len(l_fromUser) > 0:
                     # 'https\:\/\/www\.facebook\.com\/Sergei1970sk'
                     # https://www.facebook.com/solanki.jagdish.75098?hc_ref=NEWSFEED
-                    if re.search('\.php\?id\=', l_fromUser):
-                        l_match = re.search('\.php\?id\=(\d+)(\&|$)', l_fromUser)
+                    if re.search('\.php\?id=', l_fromUser):
+                        # human users
+                        l_match = re.search('\.php\?id=(\d+)(&|$)', l_fromUser)
                         if l_match:
                             l_fromUser = l_match.group(1)
                     else:
-                        l_match = re.search('\.com/([^\?]+)(\?|$)', l_fromUser)
+                        # page users
+                        l_match = re.search('\.com/([^?]+)(\?|$)', l_fromUser)
                         if l_match:
                             l_fromUser = l_match.group(1)
 
+                # c. FB user ID
                 l_fromId = l_profLink.get('data-hovercard')
                 if l_fromId is not None and len(l_fromId) > 0:
-                    l_match = re.search('\.php\?id\=(\d+)(\&|$)', l_fromId)
+                    l_match = re.search('\.php\?id=(\d+)(&|$)', l_fromId)
                     if l_match:
                         l_fromId = l_match.group(1)
 
-                if not l_fromName in l_shareTypes:
+                # only record user data if it is not a 'false' user corresponding to a share or like
+                if l_fromName not in l_shareTypes:
+                    # store both in a list and dict
                     l_from += [(l_fromName, l_fromId, l_fromUser)]
                     l_fromDict[l_fromId] = (l_fromName, l_fromUser)
 
             if len(l_from) > 0:
                 break
 
-        #l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
-
-        # shared object list
-        # _5vra --> part of the post header containing the names of the post authors
+        # DATA: (5) shared object list (post, photo, video ...)
         l_sharedList = []
+        # _5vra --> part of the post header containing the names of the post authors
         for l_type in l_shareTypes:
             for l in l_tree.xpath('.//h5[contains(@class, "_5vra")]//a[text()="{0}"]'.format(l_type)):
                 l_sharedList.append((l_type, l.get('href')))
 
+        # DATA: (6) detection of sponsored content
         l_sponsored = (len(l_tree.xpath('.//a[text()="Sponsored"]')) > 0)
 
-        # determining type
+        # raw text from the main header and of the sub-header (quoted content), if any
         l_fromHeader = BrowserDriver.get_unique(l_tree, '//h5[contains(@class, "_5vra")]')
         l_fromHeaderSub = BrowserDriver.get_unique(l_tree, '//h6[contains(@class, "_5vra")]')
 
+        # DATA: (7) determines if the list of authors contains a 'with' marker
         l_hasWith = False
         if re.search('with', l_fromHeader) or re.search('with', l_fromHeaderSub):
             l_hasWith = True
 
+        # DATA: (8) determining story type
+        # by default, it is a post
         l_type = 'post'
         if l_sponsored:
+            # sponsored type
             l_type = 'sponsored'
         else:
+            # cases of share or like of previously existing content
             if re.search('shared|liked', l_fromHeader):
                 if re.search('shared', l_fromHeader):
                     l_type = 'share'
                 else:
                     l_type = 'like'
 
+                # subtype of share/like given by the type of the first element of the quoted content list
                 if len(l_sharedList) > 0:
                     l_type += '/{0}'.format(l_sharedList[0][0])
+
+            # other types of posts
             elif re.search('commented on this', l_fromHeader):
                 l_type = 'comment'
             elif re.search('updated (his|her) profile picture', l_fromHeader):
@@ -443,206 +563,88 @@ class BrowserDriver:
             elif re.search('updated (his|her) profile video', l_fromHeader):
                 l_type = 'narcissistic/PV'
             else:
+                # case of 'people you may know' stories (found only in user's own feed)
                 l_fromHeader2 = BrowserDriver.get_unique(l_tree, '//div[contains(@class, "fwn fcg")]')
                 # <div class="fwn fcg"><span class="fwb fcb">People you may know</span></div>
                 if re.search('People you may know', l_fromHeader2):
                     l_type = 'FB/PYMK'
 
-        if l_hasWith:
-            l_type += '/with'
+        # if l_hasWith:
+        #    l_type += '/with'
 
-        print('l_fromHeader   : ' + l_fromHeader)
-        print('Id             : ' + l_id)
-        print('Sponsored      : ' + repr(l_sponsored))
-        print('Type           : ' + l_type)
-        print('Shared objects : ' + repr(l_sharedList))
-        print('Has with       : ' + repr(l_hasWith))
-        print('Date           : ' + repr(l_date))
-        print('Dates quoted   : ' + repr(l_dateQuoted))
-        print('From           : ' + repr(l_from))
-        print('From (dict)    : ' + repr(l_fromDict))
-        print('Text           : ' + l_postText)
-        print('Quoted Text    : ' + l_quotedText)
-        print('Size           : {0}'.format(l_size))
-        print('Location       : {0}'.format(l_location))
-        print('l_curY         : {0}'.format(p_curY))
-        print('l_yTop         : {0}'.format(l_yTop))
-        print('l_deltaY       : {0}'.format(l_deltaY))
-        print('l_overshoot    : {0}'.format(l_overshoot))
-        print('*** scrollBy(l_deltaY) ***')
+        # DATA: (9) image extraction
 
-        # store html source and image of complete story
-        l_baseName = '{0:03}-'.format(p_iter) + l_id
-
+        # gets a full screenshot of the browser viewport
         l_imgStory = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
         x = l_location['x']
         y = l_location['y'] - l_yTop
 
-        l_img = l_imgStory.crop((x, y, x + l_size['width'], y + l_size['height']))
+        l_baseName = '{0:03}-'.format(p_iter) + l_id
 
-        l_img.save(l_baseName + '.png')
-        # self.m_driver.get_screenshot_as_file(l_baseName + '.png')
-        # l_story.screenshot(l_baseName + '_.png')
+        if EcAppParam.gcm_debugModeOn:
+            # store html source and image of complete story
+            l_img = l_imgStory.crop((x, y, x + l_size['width'], y + l_size['height']))
 
-        with open(l_baseName + '.xml', "w") as l_xml_file:
-            l_xml_file.write(l_html)
+            l_img.save(l_baseName + '.png')
 
-        # extract images from the story
+            with open(l_baseName + '.xml', "w") as l_xml_file:
+                l_xml_file.write(l_html)
+
+        # extract actual images from the story, if any
         l_imgCount = 0
+        # use, if possible, the div above the <img> tag itself because its size is more often correct
         for l_xpath in ['.//div[./img[contains(@class, "img")]]', './/img[contains(@class, "img")]']:
             for l_image in p_story.find_elements_by_xpath(l_xpath):
                 l_height = l_image.size['height']
                 l_width = l_image.size['width']
                 if l_width >= EcAppParam.gcm_minImageSize and l_height >= EcAppParam.gcm_minImageSize:
                     l_htmlHeight = l_image.get_attribute('height')
-                    l_htmlwidth = l_image.get_attribute('width')
+                    l_htmlWidth = l_image.get_attribute('width')
 
-                    print('[{0}] S:({1} {2}) H:({3} {4}): '.format(
-                            l_imgCount, l_width, l_height, l_htmlwidth, l_htmlHeight) +
-                          l_image.get_attribute('outerHTML'))
+                    if EcAppParam.gcm_debugModeOn:
+                        print(
+                            '*** IMG [{0}] S:({1} {2}) H:({3} {4}): '.format(
+                                l_imgCount, l_width, l_height, l_htmlWidth, l_htmlHeight) +
+                            l_image.get_attribute('outerHTML')
+                        )
 
-                    #for i in range(0,10):
+                    # for i in range(0,10):
                     #    print('Loaded: ' + repr(self.m_driver.execute_script('return arguments[0].complete', l_image)))
 
                     l_img_location = l_image.location
                     xi = l_img_location['x']
                     yi = l_img_location['y'] - l_yTop
 
+                    # do the crop of the whole screen image in order to keep only the image
                     l_imgInStory = l_imgStory.crop((xi, yi, xi + l_width, yi + l_height))
                     l_imgInStory.save(l_baseName + '_{0:02}.png'.format(l_imgCount))
                     l_imgCount += 1
 
+            # if first xpath worked --> no nee to try the second
             if l_imgCount > 0:
                 break
 
+        if EcAppParam.gcm_debugModeOn:
+            print('l_fromHeader   : ' + l_fromHeader)
+            print('Id             : ' + l_id)
+            print('Sponsored      : ' + repr(l_sponsored))
+            print('Type           : ' + l_type)
+            print('Shared objects : ' + repr(l_sharedList))
+            print('Has with       : ' + repr(l_hasWith))
+            print('Date           : ' + repr(l_date))
+            print('Dates quoted   : ' + repr(l_dateQuoted))
+            print('From           : ' + repr(l_from))
+            print('From (dict)    : ' + repr(l_fromDict))
+            print('Text           : ' + l_postText)
+            print('Quoted Text    : ' + l_quotedText)
+            print('Size           : {0}'.format(l_size))
+            print('Location       : {0}'.format(l_location))
+            print('l_curY         : {0}'.format(p_curY))
+            print('l_yTop         : {0}'.format(l_yTop))
+            print('l_deltaY       : {0}'.format(l_deltaY))
+            print('l_overshoot    : {0}'.format(l_overshoot))
+
         return l_curY
-
-
-def get_profile_pjs(p_driver):
-    EcLogger.cm_logger.info("get_profile()")
-
-    WebDriverWait(p_driver, 15).until(
-        EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
-
-    EcLogger.cm_logger.info("presence of hyperfeed_story_id_")
-
-
-    WebDriverWait(p_driver, 15).until(
-        EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "more_pager_pagelet_")]')))
-
-    EcLogger.cm_logger.info("presence of more_pager_pagelet_")
-
-    for i in range(0):
-        p_driver.get_screenshot_as_file('FeedLoad_{0:02}.png'.format(i))
-        time.sleep(.1)
-
-    l_expansionCount = 3
-    while True:
-        l_pagers_found = 0
-        l_last_pager = None
-        for l_last_pager in p_driver.find_elements_by_xpath('//div[contains(@id, "more_pager_pagelet_")]'):
-            l_pagers_found += 1
-
-        EcLogger.cm_logger.info('Expanding pager #{0}'.format(l_pagers_found))
-        if l_last_pager is not None:
-            p_driver.execute_script("return arguments[0].scrollIntoView();", l_last_pager)
-
-        p_driver.get_screenshot_as_file('ExpansionLoad_{0:02}.png'.format(l_pagers_found))
-
-        if l_pagers_found >= l_expansionCount:
-            break
-
-    l_stab_iter = 0
-    while True:
-        l_finished = True
-        for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
-            try:
-                l_data_ft = l_story.get_attribute('data-ft')
-
-                if l_data_ft is not None:
-                    l_finished = False
-            except EX.StaleElementReferenceException:
-                continue
-
-        EcLogger.cm_logger.info('Stab loop #{0}'.format(l_stab_iter))
-        l_stab_iter += 1
-        if l_finished:
-            break
-
-    p_driver.get_screenshot_as_file('ExpansionLoad_98_Stab.png')
-
-    l_iter_disp = 0
-    for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
-        try:
-            l_html = l_story.get_attribute('outerHTML')
-            l_id = l_story.get_attribute('id')
-            l_id = re.sub('hyperfeed_story_id_', '', l_id).strip()
-            # extract a full xml/html tree from the page
-            l_tree = html.fromstring(l_html)
-
-            # class="_5ptz"
-            l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
-            l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
-
-            l_htmlShort = l_html[:500]
-            if len(l_html) != len(l_htmlShort):
-                l_htmlShort += '...'
-            print("-------- {0} --------\n{1}".format(l_iter_disp, l_htmlShort))
-
-            l_location = l_story.location
-
-            print('Id       : ' + l_id)
-            print('Date     : ' + l_date)
-            print('From     : ' + l_from)
-            print('Location : {0}'.format(l_location))
-
-            l_iter_disp += 1
-        except EX.StaleElementReferenceException:
-            print('***** STALE ! ******')
-
-    for i in range(2):
-        p_driver.get_screenshot_as_file('ExpansionLoad_99_Final_{0:02}.png'.format(i))
-        time.sleep(.1)
-
-    p_driver.quit()
-
-
-def old_1(p_driver):
-    WebDriverWait(p_driver, 15).until(
-        EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "hyperfeed_story_id_")]')))
-
-    l_iter = 0
-    while True:
-        print('+++++++++++++++++ {0} +++++++++++++++++'.format(l_iter))
-        l_iter += 1
-
-        l_iter_inner = 0
-        for l_story in p_driver.find_elements_by_xpath('//div[contains(@id, "hyperfeed_story_id_")]'):
-            try:
-                l_html = l_story.get_attribute('outerHTML')
-
-                # extract a full xml/html tree from the page
-                l_tree = html.fromstring(l_html)
-
-                # class="_5ptz"
-                l_date = BrowserDriver.get_unique_attr(l_tree, '//abbr[contains(@class, "_5ptz")]', 'title')
-                l_from = BrowserDriver.get_unique(l_tree, '//a[contains(@class, "profileLink")]')
-
-                l_data_ft = l_story.get_attribute('data-ft')
-
-                l_htmlShort = l_html[:500]
-                if len(l_html) != len(l_htmlShort):
-                    l_htmlShort += '...'
-                print("-------- {0} --------\n{1}".format(l_iter_inner, l_htmlShort))
-                l_iter_inner += 1
-
-                print('FT  : {0}'.format(l_data_ft))
-                print('Date: ' + l_date)
-                print('From: ' + l_from)
-            except EX.StaleElementReferenceException:
-                print('***** STALE ! ******')
-
-        time.sleep(.10)
 
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":
@@ -660,10 +662,10 @@ if __name__ == "__main__":
     EcMailer.init_mailer()
 
     # test connection to PostgresQL and wait if unavailable
-    gcm_maxiter = 20
+    gcm_maxTries = 20
     l_iter = 0
     while True:
-        if l_iter >= gcm_maxiter:
+        if l_iter >= gcm_maxTries:
             EcMailer.send_mail('WAITING: No PostgreSQL yet ...', 'l_iter = {0}'.format(l_iter))
             sys.exit(0)
 
@@ -684,15 +686,13 @@ if __name__ == "__main__":
             time.sleep(1)
             continue
 
-
     # logging system init
     try:
         EcLogger.log_init()
     except Exception as e:
         EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
 
-    #g_browser = 'Firefox'
-    #g_browser = 'xxx'
+    # g_browser = 'Firefox'
     g_browser = 'Chrome'
 
     l_phantomId = 'aziz.sharjahulmulk@gmail.com'
