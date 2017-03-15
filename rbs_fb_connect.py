@@ -10,13 +10,17 @@ from selenium.webdriver.chrome.options import Options
 
 from pyvirtualdisplay import Display
 from PIL import Image
+from subprocess import run, PIPE
 
 import lxml.html as html
 import sys
 import io
 import random
+import subprocess
+import json
 
 from ec_utilities import *
+import openvpn
 
 __author__ = 'Pavan Mahalingam'
 
@@ -61,13 +65,23 @@ class BrowserDriver:
         """
         return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
 
-    def __init__(self):
+    def __init__(self, p_user, p_pwd, p_vpn):
         """
         Instantiates Selenium WebDriver and Chrome instance. Chrome is headless or not
         depending on the value of :any:`EcAppParam.gcm_headless` (boolean)
         """
         # instantiates class logger
         self.m_logger = logging.getLogger('BrowserDriver')
+
+        # creation date/time (for staleness)
+        self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
+        l_lifespan = EcAppParam.gcm_bdLifeAverage + \
+                     (EcAppParam.gcm_bdLifeDiameter/2.0 - random.random()*EcAppParam.gcm_bdLifeDiameter)
+        self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(hours=l_lifespan)
+        self.m_logger.info('lifespan: {0} hours'.format(l_lifespan))
+
+        # open vpn
+        self.m_vpn_handle = openvpn.OpenvpnWrapper(p_vpn)
 
         if EcAppParam.gcm_headless:
             # if headless mode requested, starts the pyvirtualdisplay xvfb driver
@@ -110,15 +124,34 @@ class BrowserDriver:
             self.m_logger.critical(l_message)
             raise BrowserDriverException(l_message)
 
+        self.login_as_scrape(p_user, p_pwd)
+
+    def isStale(self):
+        """
+        Past expiration date flag.
+        :return: Boolean. True if past expiration date.
+        """
+        return self.m_expirationDate < datetime.datetime.now(tz=pytz.utc)
+
     def close(self):
         """
         Closing method. Closes Chrome and the associated WebDriver. If headless then also close xvfb.
         :return: Nothing
         """
         self.m_driver.close()
+        self.m_driver = None
 
         if self.m_display is not None:
             self.m_display.stop()
+            self.m_display = None
+
+        self.m_vpn_handle.close()
+        self.m_vpn_handle = None
+
+        l_result = run(['sudo', 'killall', '-9', 'chromedriver'], stdout=PIPE, stderr=PIPE)
+        self.m_logger.info('Killing chromedriver : ' + repr(l_result))
+        l_result = run(['sudo', 'killall', '-9', 'chromium-browser'], stdout=PIPE, stderr=PIPE)
+        self.m_logger.info('Killing Chromium : ' + repr(l_result))
 
     def login_as_scrape(self, p_user, p_passwd):
         """
@@ -159,7 +192,7 @@ class BrowserDriver:
     def go_random(self):
         """
         Selects a user ID from TB_USER and display its FB profile
-        :return: Nothing
+        :return: The chosen user ID
         """
         # connects to the database
         l_connect1 = psycopg2.connect(
@@ -214,10 +247,11 @@ class BrowserDriver:
             WebDriverWait(self.m_driver, 15).until(
                 EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
         except EX.TimeoutException:
-            self.m_logger.critical('Did not find user\'s page mainContainer')
+            self.m_logger.critical('Did not find user\'s page mainContainer. Id: {0}'.format(l_id))
             raise
 
         self.m_logger.info('user page for ID [{0}] loaded'.format(l_id))
+        return l_id
 
     def get_fb_profile(self, p_isOwnFeed=False):
         """
@@ -226,14 +260,25 @@ class BrowserDriver:
         """
         self.m_logger.info("get_fb_profile()")
 
+        # erase all images and xml files in the directory
+        if EcAppParam.gcm_verboseModeOn:
+            for l_path in [EcAppParam.gcm_appRoot + '*.png', EcAppParam.gcm_appRoot + '*.xml']:
+                l_result = subprocess.run(
+                    'rm -f ' + l_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+                self.m_logger.info('Erasing files : ' + repr(l_result))
+
         # prefix in the id attribute for all stories blocks (different for user's page and own feed)
         l_storyPrefix = 'tl_unit_'
         if p_isOwnFeed:
             l_storyPrefix = 'hyperfeed_story_id_'
 
         # wait for the presence of at least one such block
-        WebDriverWait(self.m_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "{0}")]'.format(l_storyPrefix))))
+        try:
+            WebDriverWait(self.m_driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "{0}")]'.format(l_storyPrefix))))
+        except EX.TimeoutException as e:
+            self.m_logger.warning('could not find prefix: {0}/{1}'.format(l_storyPrefix, repr(e)))
+            raise
 
         self.m_logger.info('presence of {0}'.format(l_storyPrefix))
 
@@ -273,12 +318,16 @@ class BrowserDriver:
 
                         # analyze the story (includes scrolling past the story block to trigger the loading
                         # of new ones, if any). This call affects the current y position.
-                        l_curY = self.analyze_story(l_story, l_storyCount, l_curY, p_storyPrefix=l_storyPrefix)
+                        l_curY, l_retStory = \
+                            self.analyze_story(l_story, l_storyCount, l_curY, p_storyPrefix=l_storyPrefix)
+
+                        print('json: ' + json.dumps(l_retStory))
 
                         l_storyCount += 1
                     else:
                         self.m_logger.debug('--- Story already analyzed: ' + l_id)
-                except EX.StaleElementReferenceException:
+                except EX.StaleElementReferenceException as e:
+                    self.m_logger.warning('Stale element: {0}'.format(repr(e)))
                     continue
 
             if l_fruitlessTry:
@@ -359,7 +408,10 @@ class BrowserDriver:
         :param p_storyPrefix: Prefix of the `id` attribute of the story's outermost `<div>`
         :return: the new y scroll value
         """
+        # timing counter
+        t0 = time.perf_counter()
 
+        # raw html for this story
         l_html = p_story.get_attribute('outerHTML')
 
         if EcAppParam.gcm_debugModeOn:
@@ -397,21 +449,33 @@ class BrowserDriver:
 
         # waiting for story availability
         # first wait for visibility DOM attribute
-        WebDriverWait(self.m_driver, 15).until(EC.visibility_of(p_story))
+        try:
+            WebDriverWait(self.m_driver, 15).until(EC.visibility_of(p_story))
+        except EX.TimeoutException as e:
+            self.m_logger.warning('Story [{0}] failed to become visible: {1}'.format(l_id, repr(e)))
+
+        #l_wait_cycles = 0
+        #while not self.m_driver.execute_script('return arguments[0].complete', p_story):
+        #    time.sleep(.05)
+        #    l_wait_cycles += 1
+        #    if l_wait_cycles % 10 == 0:
+        #        self.m_logger.info('Wait for complete: {0}'.format(l_wait_cycles))
+
+        #    if l_wait_cycles > 100:
+        #        break
 
         # for safety's sake, wait for the absence of data-ft attribute
         l_dataWait = 0
-        while True:
+        while l_dataWait < 100:
             l_data_ft = p_story.get_attribute('data-ft')
             if l_data_ft is None:
                 break
             else:
                 l_dataWait += 1
-                print('l_data_ft: ' + l_data_ft)
+                if l_dataWait % 10 == 0:
+                    print('l_data_ft [{0}]: {1}'.format(l_dataWait, l_data_ft[:50]))
 
-            # maximum tries: 30 times
-            if l_dataWait > 30:
-                return p_curY
+            time.sleep(.05)
 
         # build an lxml analyser out of the html
         l_tree = html.fromstring(l_html)
@@ -569,62 +633,76 @@ class BrowserDriver:
                 if re.search('People you may know', l_fromHeader2):
                     l_type = 'FB/PYMK'
 
-        # if l_hasWith:
-        #    l_type += '/with'
-
         # DATA: (9) image extraction
+        l_imageList = []
+        if EcAppParam.gcm_getImages:
+            # gets a full screenshot of the browser viewport
+            l_imgStory = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+            x = l_location['x']
+            y = l_location['y'] - l_yTop
 
-        # gets a full screenshot of the browser viewport
-        l_imgStory = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
-        x = l_location['x']
-        y = l_location['y'] - l_yTop
+            l_baseName = '{0:03}-'.format(p_iter) + l_id
 
-        l_baseName = '{0:03}-'.format(p_iter) + l_id
+            if EcAppParam.gcm_verboseModeOn:
+                # store html source and image of complete story
+                l_img = l_imgStory.crop((x, y, x + l_size['width'], y + l_size['height']))
 
-        if EcAppParam.gcm_debugModeOn:
-            # store html source and image of complete story
-            l_img = l_imgStory.crop((x, y, x + l_size['width'], y + l_size['height']))
+                l_img.save(l_baseName + '.png')
 
-            l_img.save(l_baseName + '.png')
+                with open(l_baseName + '.xml', "w") as l_xml_file:
+                    l_xml_file.write(l_html)
 
-            with open(l_baseName + '.xml', "w") as l_xml_file:
-                l_xml_file.write(l_html)
+            # extract actual images from the story, if any
+            l_imgCount = 0
+            # use, if possible, the div above the <img> tag itself because its size is more often correct
+            for l_xpath in ['.//div[./img[contains(@class, "img")]]', './/img[contains(@class, "img")]']:
+                for l_image in p_story.find_elements_by_xpath(l_xpath):
+                    l_height = l_image.size['height']
+                    l_width = l_image.size['width']
+                    if l_width >= EcAppParam.gcm_minImageSize and l_height >= EcAppParam.gcm_minImageSize:
+                        l_htmlHeight = l_image.get_attribute('height')
+                        l_htmlWidth = l_image.get_attribute('width')
 
-        # extract actual images from the story, if any
-        l_imgCount = 0
-        # use, if possible, the div above the <img> tag itself because its size is more often correct
-        for l_xpath in ['.//div[./img[contains(@class, "img")]]', './/img[contains(@class, "img")]']:
-            for l_image in p_story.find_elements_by_xpath(l_xpath):
-                l_height = l_image.size['height']
-                l_width = l_image.size['width']
-                if l_width >= EcAppParam.gcm_minImageSize and l_height >= EcAppParam.gcm_minImageSize:
-                    l_htmlHeight = l_image.get_attribute('height')
-                    l_htmlWidth = l_image.get_attribute('width')
+                        if EcAppParam.gcm_debugModeOn:
+                            print(
+                                '*** IMG [{0}] S:({1} {2}) H:({3} {4}): '.format(
+                                    l_imgCount, l_width, l_height, l_htmlWidth, l_htmlHeight) +
+                                l_image.get_attribute('outerHTML')
+                            )
 
-                    if EcAppParam.gcm_debugModeOn:
-                        print(
-                            '*** IMG [{0}] S:({1} {2}) H:({3} {4}): '.format(
-                                l_imgCount, l_width, l_height, l_htmlWidth, l_htmlHeight) +
-                            l_image.get_attribute('outerHTML')
-                        )
+                        # for i in range(0,10):
+                        #    print('Loaded: ' + repr(self.m_driver.execute_script('return arguments[0].complete', l_image)))
 
-                    # for i in range(0,10):
-                    #    print('Loaded: ' + repr(self.m_driver.execute_script('return arguments[0].complete', l_image)))
+                        l_img_location = l_image.location
+                        xi = l_img_location['x']
+                        yi = l_img_location['y'] - l_yTop
 
-                    l_img_location = l_image.location
-                    xi = l_img_location['x']
-                    yi = l_img_location['y'] - l_yTop
+                        # do the crop of the whole screen image in order to keep only the image
+                        l_imgInStory = l_imgStory.crop((xi, yi, xi + l_width, yi + l_height))
+                        if EcAppParam.gcm_verboseModeOn:
+                            l_imgInStory.save(l_baseName + '_{0:02}.png'.format(l_imgCount))
+                        l_imgCount += 1
 
-                    # do the crop of the whole screen image in order to keep only the image
-                    l_imgInStory = l_imgStory.crop((xi, yi, xi + l_width, yi + l_height))
-                    l_imgInStory.save(l_baseName + '_{0:02}.png'.format(l_imgCount))
-                    l_imgCount += 1
+                        l_imageList.append(l_imgInStory)
 
-            # if first xpath worked --> no nee to try the second
-            if l_imgCount > 0:
-                break
+                # if first xpath worked --> no nee to try the second
+                if l_imgCount > 0:
+                    break
 
-        if EcAppParam.gcm_debugModeOn:
+        l_retStory['id'] = l_id
+        l_retStory['date'] = l_date
+        l_retStory['with'] = l_hasWith
+        l_retStory['sponsored'] = l_sponsored
+        l_retStory['type'] = l_type
+        l_retStory['shared'] = l_sharedList
+        l_retStory['from_list'] = l_from
+        l_retStory['from_dict'] = l_fromDict
+        l_retStory['text'] = l_postText
+        l_retStory['text_quoted'] = l_quotedText
+        l_retStory['date_quoted'] = l_dateQuoted
+        l_retStory['images'] = l_imageList
+
+        if EcAppParam.gcm_verboseModeOn:
             print('l_fromHeader   : ' + l_fromHeader)
             print('Id             : ' + l_id)
             print('Sponsored      : ' + repr(l_sponsored))
@@ -644,7 +722,9 @@ class BrowserDriver:
             print('l_deltaY       : {0}'.format(l_deltaY))
             print('l_overshoot    : {0}'.format(l_overshoot))
 
-        return l_curY
+        self.m_logger.info(
+            'Processing story {0} complete. Elapsed time: {1:.3}'.format(p_iter, time.perf_counter() - t0))
+        return l_curY, l_retStory
 
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":
@@ -698,8 +778,7 @@ if __name__ == "__main__":
     l_phantomId = 'aziz.sharjahulmulk@gmail.com'
     l_phantomPwd = '15Eyyaka'
 
-    l_driver = BrowserDriver()
-    l_driver.login_as_scrape(l_phantomId, l_phantomPwd)
+    l_driver = BrowserDriver(l_phantomId, l_phantomPwd, 'India.Maharashtra.Mumbai.TCP.ovpn')
     l_driver.go_random()
     l_driver.get_fb_profile()
 
