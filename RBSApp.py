@@ -36,9 +36,9 @@ class RbsBackgroundTask(threading.Thread):
                 self.m_browser = None
                 self.m_logger.info('*** Browser Driver closed')
             elif self.m_browser is None:
-                l_phantomId = 'aziz.sharjahulmulk@gmail.com'
-                l_phantomPwd = '15Eyyaka'
-                l_vpn = 'India.Maharashtra.Mumbai.TCP.ovpn'
+                l_phantomId = 'nicolas.reimen@gmail.com'
+                l_phantomPwd = 'murugan!'
+                l_vpn = None
 
                 try:
                     self.m_browser = BrowserDriver(l_phantomId, l_phantomPwd, l_vpn)

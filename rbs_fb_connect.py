@@ -18,6 +18,7 @@ import io
 import random
 import subprocess
 import json
+import base64
 
 from ec_utilities import *
 import openvpn
@@ -81,7 +82,10 @@ class BrowserDriver:
         self.m_logger.info('lifespan: {0} hours'.format(l_lifespan))
 
         # open vpn
-        self.m_vpn_handle = openvpn.OpenvpnWrapper(p_vpn)
+        if p_vpn is not None and len(p_vpn) > 0:
+            self.m_vpn_handle = openvpn.OpenvpnWrapper(p_vpn)
+        else:
+            self.m_vpn_handle = None
 
         if EcAppParam.gcm_headless:
             # if headless mode requested, starts the pyvirtualdisplay xvfb driver
@@ -145,8 +149,9 @@ class BrowserDriver:
             self.m_display.stop()
             self.m_display = None
 
-        self.m_vpn_handle.close()
-        self.m_vpn_handle = None
+        if self.m_vpn_handle is not None:
+            self.m_vpn_handle.close()
+            self.m_vpn_handle = None
 
         l_result = run(['sudo', 'killall', '-9', 'chromedriver'], stdout=PIPE, stderr=PIPE)
         self.m_logger.info('Killing chromedriver : ' + repr(l_result))
@@ -321,6 +326,9 @@ class BrowserDriver:
                         l_curY, l_retStory = \
                             self.analyze_story(l_story, l_storyCount, l_curY, p_storyPrefix=l_storyPrefix)
 
+                        l_retStory['date'] = l_retStory['date'].strftime('%Y%m%d %H:%M')
+                        l_retStory['date_quoted'] = [d.strftime('%Y%m%d %H:%M') for d in l_retStory['date_quoted']]
+                        l_retStory['images'] = [i[:100] + '...' for i in l_retStory['images']]
                         print('json: ' + json.dumps(l_retStory))
 
                         l_storyCount += 1
@@ -484,8 +492,14 @@ class BrowserDriver:
         l_date = None
         l_dateQuoted = []
         for l_dateContainer in p_story.find_elements_by_xpath('.//abbr[contains(@class, "_5ptz")]'):
-            l_txtDt = l_dateContainer.get_attribute('title')
-            l_dt = datetime.datetime.strptime(l_txtDt, '%A, %d %B %Y at %H:%M')
+            l_txtDt = re.sub('\,', '', l_dateContainer.get_attribute('title'))
+            try:
+                l_dt = datetime.datetime.strptime(l_txtDt, '%A %d %B %Y at %H:%M')
+            except ValueError:
+                try:
+                    l_dt = datetime.datetime.strptime(l_txtDt, '%A %d %B %Y at %I:%M%p')
+                except ValueError:
+                    l_dt = datetime.datetime.now()
 
             if EcAppParam.gcm_debugModeOn:
                 print('l_txtDt: ' + l_txtDt)
@@ -683,12 +697,15 @@ class BrowserDriver:
                             l_imgInStory.save(l_baseName + '_{0:02}.png'.format(l_imgCount))
                         l_imgCount += 1
 
-                        l_imageList.append(l_imgInStory)
+                        l_outputBuffer = io.BytesIO()
+                        l_imgInStory.save(l_outputBuffer, format='PNG')
+                        l_imageList.append(base64.b64encode(l_outputBuffer.getvalue()).decode())
 
                 # if first xpath worked --> no nee to try the second
                 if l_imgCount > 0:
                     break
 
+        l_retStory = dict()
         l_retStory['id'] = l_id
         l_retStory['date'] = l_date
         l_retStory['with'] = l_hasWith
@@ -775,10 +792,12 @@ if __name__ == "__main__":
     # g_browser = 'Firefox'
     g_browser = 'Chrome'
 
-    l_phantomId = 'aziz.sharjahulmulk@gmail.com'
-    l_phantomPwd = '15Eyyaka'
+    l_phantomId = 'nicolas.reimen@gmail.com'
+    l_phantomPwd = 'murugan!'
+    # l_vpn = 'India.Maharashtra.Mumbai.TCP.ovpn'
+    l_vpn = None
 
-    l_driver = BrowserDriver(l_phantomId, l_phantomPwd, 'India.Maharashtra.Mumbai.TCP.ovpn')
+    l_driver = BrowserDriver(l_phantomId, l_phantomPwd, l_vpn)
     l_driver.go_random()
     l_driver.get_fb_profile()
 
