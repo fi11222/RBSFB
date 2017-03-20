@@ -81,11 +81,6 @@ class BrowserDriver:
         self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(hours=l_lifespan)
         self.m_logger.info('lifespan: {0} hours'.format(l_lifespan))
 
-        # open vpn
-        if p_vpn is not None and len(p_vpn) > 0:
-            self.m_vpn_handle = openvpn.OpenvpnWrapper(p_vpn)
-        else:
-            self.m_vpn_handle = None
 
         if EcAppParam.gcm_headless:
             # if headless mode requested, starts the pyvirtualdisplay xvfb driver
@@ -128,7 +123,7 @@ class BrowserDriver:
             self.m_logger.critical(l_message)
             raise BrowserDriverException(l_message)
 
-        self.login_as_scrape(p_user, p_pwd)
+        self.login_as_scrape(p_user, p_pwd, p_vpn)
 
     def isStale(self):
         """
@@ -158,7 +153,7 @@ class BrowserDriver:
         l_result = run(['sudo', 'killall', '-9', 'chromium-browser'], stdout=PIPE, stderr=PIPE)
         self.m_logger.info('Killing Chromium : ' + repr(l_result))
 
-    def login_as_scrape(self, p_user, p_passwd):
+    def login_as_scrape(self, p_user, p_passwd, p_vpn):
         """
         Logging-in method.
 
@@ -166,6 +161,13 @@ class BrowserDriver:
         :param p_passwd: FB password
         :return: nothing (if there were problems --> raise errors)
         """
+
+        # open vpn
+        if p_vpn is not None and len(p_vpn) > 0:
+            self.m_vpn_handle = openvpn.OpenvpnWrapper(p_vpn)
+        else:
+            self.m_vpn_handle = None
+
         # load logging page
         self.m_driver.get('http://www.facebook.com')
 
@@ -193,6 +195,33 @@ class BrowserDriver:
         except EX.TimeoutException:
             self.m_logger.critical('Did not find user ID/pwd input or post-login mainContainer')
             raise
+
+    def log_out(self):
+        try:
+            # wait for the presence of the settings arrow down button
+            l_settings = WebDriverWait(self.m_driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, '//a[contains(@class, "_5lxs")]')))
+
+            l_settings.click()
+        except EX.TimeoutException:
+            self.m_logger.critical('Did not find settings arrow down button')
+            raise
+
+        try:
+            # wait for the presence of the log-out button
+            l_logoutButton = WebDriverWait(self.m_driver, 15).until(
+                EC.presence_of_element_located(
+                    (By.XPATH, '//a[@class="_54nc" and contains(@data-gt, "menu_logout")]')))
+
+            l_logoutButton.click()
+        except EX.TimeoutException:
+            self.m_logger.critical('Did not find logout button')
+            raise
+
+        # close vpn if present
+        if self.m_vpn_handle is not None:
+            self.m_vpn_handle.close()
+            self.m_vpn_handle = None
 
     def go_random(self):
         """
@@ -237,9 +266,14 @@ class BrowserDriver:
                     offset {0};""".format(l_row_choice)
 
         l_cursor = l_connect1.cursor()
+
+        # timing counter
+        t0 = time.perf_counter()
         l_cursor.execute(l_query)
+        self.m_logger.info('execute(): {0:.3}'.format(time.perf_counter() - t0))
         for l_id, in l_cursor:
             break
+
 
         self.m_logger.info('ID: {0}'.format(l_id))
         # close database connection
@@ -799,7 +833,13 @@ if __name__ == "__main__":
 
     l_driver = BrowserDriver(l_phantomId, l_phantomPwd, l_vpn)
     l_driver.go_random()
+    #l_driver.get_fb_profile()
+    l_driver.log_out()
+
+    l_driver.login_as_scrape(l_phantomId, l_phantomPwd, l_vpn)
+    l_driver.go_random()
     l_driver.get_fb_profile()
+    l_driver.log_out()
 
     if EcAppParam.gcm_headless:
         l_driver.close()

@@ -27,25 +27,28 @@ class RbsBackgroundTask(threading.Thread):
         self.start()
 
     def run(self):
+        l_phantomId = 'nicolas.reimen@gmail.com'
+        l_phantomPwd = 'murugan!'
+        l_vpn = None
+
         while True:
-            time.sleep(15)
-            self.m_logger.info('top')
+            time.sleep(random.randint(10, 20))
+            self.m_logger.info('top >>>>>>>>>>>>>>>>>>>>>>>')
 
             if self.m_browser is not None and self.m_browser.isStale():
-                self.m_browser.close()
-                self.m_browser = None
-                self.m_logger.info('*** Browser Driver closed')
+                self.m_browser.log_out()
+                self.m_logger.info('*** User Logged out')
+                time.sleep(random.randint(10, 20))
+                self.m_browser.login_as_scrape(l_phantomId, l_phantomPwd, l_vpn)
+                self.m_logger.info('*** User Logged back in')
             elif self.m_browser is None:
-                l_phantomId = 'nicolas.reimen@gmail.com'
-                l_phantomPwd = 'murugan!'
-                l_vpn = None
-
                 try:
                     self.m_browser = BrowserDriver(l_phantomId, l_phantomPwd, l_vpn)
                     self.m_logger.info('*** Browser Driver set-up complete')
                 except Exception as e:
                     self.m_logger.warning('Serious exception - aborting browser driver: ' + repr(e))
                     self.m_browser = None
+                    sys.exit(0)
             else:
                 try:
                     t0 = time.perf_counter()
@@ -58,7 +61,7 @@ class RbsBackgroundTask(threading.Thread):
                 except Exception as e:
                     self.m_logger.warning('Serious exception - killing browser driver: ' + repr(e))
                     self.m_browser.close()
-                    self.m_browser = None
+                    sys.exit(0)
 
 
 class RbsApp(EcAppCore):
