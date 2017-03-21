@@ -449,7 +449,7 @@ class BrowserDriver:
             l_yTarget = y + random.randint(-d/2, d/2)
             self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTarget))
             time.sleep(.01)
-            
+
         self.m_driver.execute_script('window.scrollTo(0, {0});'.format(y))
 
     def analyze_story(self, p_story, p_iter, p_curY, p_storyPrefix='hyperfeed_story_id_', p_obfuscate=True):
