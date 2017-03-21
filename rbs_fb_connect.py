@@ -6,6 +6,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common import exceptions as EX
+from selenium.webdriver import ActionChains
 from selenium.webdriver.chrome.options import Options
 
 from pyvirtualdisplay import Display
@@ -74,13 +75,8 @@ class BrowserDriver:
         # instantiates class logger
         self.m_logger = logging.getLogger('BrowserDriver')
 
-        # creation date/time (for staleness)
         self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
-        l_lifespan = EcAppParam.gcm_bdLifeAverage + \
-                     (EcAppParam.gcm_bdLifeDiameter/2.0 - random.random()*EcAppParam.gcm_bdLifeDiameter)
-        self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(hours=l_lifespan)
-        self.m_logger.info('lifespan: {0} hours'.format(l_lifespan))
-
+        self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(days=3650)
 
         if EcAppParam.gcm_headless:
             # if headless mode requested, starts the pyvirtualdisplay xvfb driver
@@ -97,6 +93,10 @@ class BrowserDriver:
 
             # notification disabling option to be passed to Chrome
             l_option.add_argument('disable-notifications')
+            if not EcAppParam.gcm_headless:
+                l_option.add_argument('start-maximized')
+            else:
+                l_option.add_argument('start-fullscreen')
 
             # Create a new instance of the Chrome driver
             self.m_logger.info("Launching Chrome")
@@ -106,7 +106,12 @@ class BrowserDriver:
                 # Move the window to position x/y
                 self.m_driver.set_window_position(700, 0)
                 # Resize the window to the screen width/height
-                self.m_driver.set_window_size(1200, 1000)
+                self.m_driver.set_window_size(EcAppParam.gcm_width, EcAppParam.gcm_height)
+
+                self.m_browserWidth, self.m_browserHeight = EcAppParam.gcm_width, EcAppParam.gcm_height
+            else:
+                self.m_browserWidth, self.m_browserHeight = \
+                    EcAppParam.gcm_headlessWidth, EcAppParam.gcm_headlessHeight
 
         elif EcAppParam.gcm_browser == 'Firefox':
             # Create a new instance of the Firefox driver
@@ -115,9 +120,14 @@ class BrowserDriver:
 
             if not EcAppParam.gcm_headless:
                 # Resize the window to the screen width/height
-                self.m_driver.set_window_size(1200, 1000)
+                self.m_driver.set_window_size(EcAppParam.gcm_width, EcAppParam.gcm_height)
                 # Move the window to position x/y
                 self.m_driver.set_window_position(800, 0)
+
+                self.m_browserWidth, self.m_browserHeight = EcAppParam.gcm_width, EcAppParam.gcm_height
+            else:
+                self.m_browserWidth, self.m_browserHeight = \
+                    EcAppParam.gcm_headlessWidth, EcAppParam.gcm_headlessHeight
         else:
             l_message = '[BrowserDriver] Browser type not supported: {0}'.format(EcAppParam.gcm_browser)
             self.m_logger.critical(l_message)
@@ -161,6 +171,13 @@ class BrowserDriver:
         :param p_passwd: FB password
         :return: nothing (if there were problems --> raise errors)
         """
+
+        # creation date/time (for staleness)
+        self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
+        l_lifespan = EcAppParam.gcm_bdLifeAverage + \
+                     (EcAppParam.gcm_bdLifeDiameter/2.0 - random.random()*EcAppParam.gcm_bdLifeDiameter)
+        self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(hours=l_lifespan)
+        self.m_logger.info('lifespan: {0} hours'.format(l_lifespan))
 
         # open vpn
         if p_vpn is not None and len(p_vpn) > 0:
@@ -258,7 +275,10 @@ class BrowserDriver:
         # retrieve ID of chosen row
         l_id = ''
         l_query = """
-                    select "ID"
+                    select
+                        "ID"
+                        , "ID_INTERNAL"
+                        , "ST_USER_ID"
                     from
                         "TB_USER"
                     order by
@@ -271,16 +291,20 @@ class BrowserDriver:
         t0 = time.perf_counter()
         l_cursor.execute(l_query)
         self.m_logger.info('execute(): {0:.3}'.format(time.perf_counter() - t0))
-        for l_id, in l_cursor:
+        l_id_internal = None
+        l_userId = None
+        for l_id, l_id_internal, l_userId in l_cursor:
             break
 
-
-        self.m_logger.info('ID: {0}'.format(l_id))
-        # close database connection
-        l_connect1.close()
+        self.m_logger.info('FB ID: {0}'.format(l_id))
+        self.m_logger.info('FB UID: {0}'.format(l_userId))
 
         # go to the user's page and wait for the page to load
-        self.m_driver.get('http://www.facebook.com/{0}'.format(l_id))
+        if l_userId is not None:
+            self.m_driver.get('http://www.facebook.com/{0}'.format(l_userId))
+        else:
+            self.m_driver.get('http://www.facebook.com/{0}'.format(l_id))
+
         try:
             # wait for mainContainer
             WebDriverWait(self.m_driver, 15).until(
@@ -289,10 +313,44 @@ class BrowserDriver:
             self.m_logger.critical('Did not find user\'s page mainContainer. Id: {0}'.format(l_id))
             raise
 
-        self.m_logger.info('user page for ID [{0}] loaded'.format(l_id))
+        # retrieve user ID from url if not already known
+        if l_userId is None:
+            l_url = self.m_driver.current_url
+            self.m_logger.info('Current url [{0}]'.format(l_url))
+
+            l_userId = re.sub('https://www\.facebook\.com/', '', l_url)
+            self.m_logger.info('FB user ID [{0}]'.format(l_userId))
+
+            if l_id_internal is not None:
+                l_cursor = l_connect1.cursor()
+                l_cursor.execute("""
+                            update
+                                "TB_USER"
+                            set
+                                "ST_USER_ID" = %s
+                            where
+                                "ID_INTERNAL" = %s
+                            ;""", (l_userId, l_id_internal))
+                l_connect1.commit()
+
+        # initiate download session
+        l_now = datetime.datetime.now()
+        self.m_dnl_ses_id = l_userId + '_' + l_now.strftime('%Y%m%d-%H%M%S.%f')
+
+        l_cursor = l_connect1.cursor()
+        l_cursor.execute("""
+                    insert into
+                        "TB_SESSION" ("ID_INTERNAL", "ST_SESSION_ID", "DT_CRE")
+                    values (%s, %s, %s)
+                    ;""", (l_id_internal, self.m_dnl_ses_id, l_now))
+        l_connect1.commit()
+
+        # close database connection
+        l_connect1.close()
+
         return l_id
 
-    def get_fb_profile(self, p_isOwnFeed=False):
+    def get_fb_profile(self, p_isOwnFeed=False, p_obfuscate=True):
         """
         Downloads the profile of a user. Before calling this method, the user's page must already have been loaded.
         :return: Nothing
@@ -358,14 +416,55 @@ class BrowserDriver:
                         # analyze the story (includes scrolling past the story block to trigger the loading
                         # of new ones, if any). This call affects the current y position.
                         l_curY, l_retStory = \
-                            self.analyze_story(l_story, l_storyCount, l_curY, p_storyPrefix=l_storyPrefix)
+                            self.analyze_story(
+                                l_story, l_storyCount, l_curY, p_storyPrefix=l_storyPrefix, p_obfuscate=p_obfuscate)
+
+                        l_storyDate = l_retStory['date']
 
                         l_retStory['date'] = l_retStory['date'].strftime('%Y%m%d %H:%M')
                         l_retStory['date_quoted'] = [d.strftime('%Y%m%d %H:%M') for d in l_retStory['date_quoted']]
+                        l_jsonStore = json.dumps(l_retStory)
                         l_retStory['images'] = [i[:100] + '...' for i in l_retStory['images']]
-                        print('json: ' + json.dumps(l_retStory))
+                        print('json [{0}]: {1}'.format(len(l_jsonStore), json.dumps(l_retStory)))
+
+                        # open database connection
+                        l_connect1 = psycopg2.connect(
+                            host=EcAppParam.gcm_dbServer,
+                            database=EcAppParam.gcm_dbDatabase,
+                            user=EcAppParam.gcm_dbUser,
+                            password=EcAppParam.gcm_dbPassword
+                        )
+
+                        l_cursor = l_connect1.cursor()
+                        l_cursor.execute(
+                            """
+                                insert into
+                                    "TB_STORY" (
+                                        "ST_SESSION_ID"
+                                        , "DT_CRE"
+                                        , "DT_STORY"
+                                        , "ST_TYPE"
+                                        , "TX_JSON"
+                                    )
+                                values (%s, %s, %s, %s, %s)
+                            ;""", (
+                                self.m_dnl_ses_id,
+                                datetime.datetime.now(),
+                                l_storyDate,
+                                l_retStory['type'],
+                                l_jsonStore
+                            )
+                        )
+                        l_connect1.commit()
+
+                        # close database connection
+                        l_connect1.close()
 
                         l_storyCount += 1
+                        if p_obfuscate:
+                            l_wait = random.randint(5, 30)
+                            self.m_logger.info('Wating for {0} seconds'.format(l_wait))
+                            self.mouse_obfuscate(l_wait)
                     else:
                         self.m_logger.debug('--- Story already analyzed: ' + l_id)
                 except EX.StaleElementReferenceException as e:
@@ -443,6 +542,7 @@ class BrowserDriver:
 
     def scroll_obfuscate(self, y):
         l_stepCount = random.randint(5,15)
+        self.m_logger.info('Steps: {0}'.format(l_stepCount))
 
         for i in range(l_stepCount, 0, -1):
             d = l_stepCount * 10
@@ -451,6 +551,38 @@ class BrowserDriver:
             time.sleep(.01)
 
         self.m_driver.execute_script('window.scrollTo(0, {0});'.format(y))
+
+    def mouse_obfuscate(self, p_delay):
+        l_max_steps = 5
+        if p_delay > 5:
+            l_max_steps = int(p_delay)
+        if l_max_steps > 15:
+            l_max_steps = 15
+
+        l_delay_steps = random.randint(5, l_max_steps)
+        for i in range(l_delay_steps):
+            l_body = self.m_driver.find_element_by_xpath('//body')
+            l_action = ActionChains(self.m_driver)
+            l_action.move_to_element(l_body)
+            l_action.perform()
+
+            l_mouse_steps = random.randint(2,10)
+            #l_mouse_steps = 0
+            for j in range(l_mouse_steps):
+                l_action = ActionChains(self.m_driver)
+                l_offsetX = random.randint(-self.m_browserWidth / 10, self.m_browserWidth / 10)
+                l_offsetY = random.randint(-self.m_browserHeight / 10, self.m_browserHeight / 10)
+
+                #self.m_logger.info('{0} Offset: [{1}, {2}]'.format(j, l_offsetX, l_offsetY))
+
+                l_action.move_by_offset(l_offsetX, l_offsetY)
+                l_action.perform()
+                time.sleep(.01)
+
+            l_action = ActionChains(self.m_driver)
+            l_action.context_click()
+            l_action.perform()
+            time.sleep(p_delay/l_delay_steps)
 
     def analyze_story(self, p_story, p_iter, p_curY, p_storyPrefix='hyperfeed_story_id_', p_obfuscate=True):
         """
