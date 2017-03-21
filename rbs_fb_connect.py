@@ -441,7 +441,18 @@ class BrowserDriver:
             except EX.StaleElementReferenceException:
                 print('***** STALE ! ******')
 
-    def analyze_story(self, p_story, p_iter, p_curY, p_storyPrefix='hyperfeed_story_id_'):
+    def scroll_obfuscate(self, y):
+        l_stepCount = random.randint(5,15)
+
+        for i in range(l_stepCount, 0, -1):
+            d = l_stepCount * 10
+            l_yTarget = y + random.randint(-d/2, d/2)
+            self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTarget))
+            time.sleep(.01)
+            
+        self.m_driver.execute_script('window.scrollTo(0, {0});'.format(y))
+
+    def analyze_story(self, p_story, p_iter, p_curY, p_storyPrefix='hyperfeed_story_id_', p_obfuscate=True):
         """
         Story analysis method.
         :param p_story: WebDriver element positioned on the story
@@ -481,10 +492,14 @@ class BrowserDriver:
         l_curY = l_yTop
         l_overshoot = l_location['y'] + l_size['height'] + 50
 
-        # first scroll to the bottom of the story (overshot) to trigger loading of next stories, if any
-        self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_overshoot))
-        # then scroll to the top of the story
-        self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTop))
+        if p_obfuscate:
+            self.scroll_obfuscate(l_overshoot)
+            self.scroll_obfuscate(l_yTop)
+        else:
+            # first scroll to the bottom of the story (overshoot) to trigger loading of next stories, if any
+            self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_overshoot))
+            # then scroll to the top of the story
+            self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTop))
 
         # previous method with delta, kept for now in reserve
         # self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
