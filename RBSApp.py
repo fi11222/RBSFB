@@ -32,7 +32,14 @@ class RbsBackgroundTask(threading.Thread):
         l_vpn = None
 
         while True:
-            time.sleep(random.randint(10, 20))
+            l_sleep = random.randint(20, 40)
+            self.m_logger.info('Waiting for {0} seconds'.format(l_sleep))
+
+            if self.m_browser is not None:
+                self.m_browser.mouse_obfuscate(l_sleep)
+            else:
+                time.sleep(l_sleep)
+
             self.m_logger.info('top >>>>>>>>>>>>>>>>>>>>>>>')
 
             if self.m_browser is not None and self.m_browser.isStale():
@@ -48,7 +55,7 @@ class RbsBackgroundTask(threading.Thread):
                 except Exception as e:
                     self.m_logger.warning('Serious exception - aborting browser driver: ' + repr(e))
                     self.m_browser = None
-                    sys.exit(0)
+                    raise
             else:
                 try:
                     t0 = time.perf_counter()
@@ -61,7 +68,7 @@ class RbsBackgroundTask(threading.Thread):
                 except Exception as e:
                     self.m_logger.warning('Serious exception - killing browser driver: ' + repr(e))
                     self.m_browser.close()
-                    sys.exit(0)
+                    raise
 
 
 class RbsApp(EcAppCore):
