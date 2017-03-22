@@ -55,7 +55,18 @@ class EcRequestHandler(http.server.SimpleHTTPRequestHandler):
     # GET HTTP request
     def do_GET(self):
         self.m_logger.info('Received GET request')
-        super().do_GET()
+        # super().do_GET()
+
+        # response code and MIME type
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+
+        # call the rest of the app to get the appropriate response
+        l_response = EcRequestHandler.cm_app.get_responseGet(self)
+
+        # and send it
+        self.wfile.write(bytes(l_response, 'utf-8'))
 
     # POST HTTP request
     def do_POST(self):
@@ -73,7 +84,7 @@ class EcRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
         # call the rest of the app to get the appropriate response
-        l_response = EcRequestHandler.cm_app.get_response(self)
+        l_response = EcRequestHandler.cm_app.get_responsePost(self, l_data)
 
         # and send it
         self.wfile.write(bytes(l_response, 'utf-8'))

@@ -43,7 +43,7 @@ class OpenvpnWrapper:
     @classmethod
     def initClass(cls):
         cls.cm_baseIP = cls.getOwnIp()
-        EcLogger.root_logger().info('Base IP: ' + cls.cm_baseIP)
+        EcLogger.root_logger().info('Base IP: {0}'.format(cls.cm_baseIP))
 
     @staticmethod
     def getOwnIp():

@@ -95,12 +95,26 @@ class EcAppCore(threading.Thread):
     def get_connection_pool(self):
         return self.m_connectionPool
 
-    #: Main application entry point - App response to an HTTP request
-    def get_response(self, p_requestHandler):
+    #: Main application entry point - App response to an HTTP POST request
+    def get_responsePost(self, p_requestHandler, p_postData):
         # completely useless line. Only there to avoid PEP-8 pedantic complaint
         self.m_rq = p_requestHandler
 
         return '{"status":"FAIL", "message":"You should never see this. If you do then things are really wrong"}'
+
+    #: Main application entry point - App response to an HTTP GET request
+    def get_responseGet(self, p_requestHandler):
+        # completely useless line. Only there to avoid PEP-8 pedantic complaint
+        self.m_rq = p_requestHandler
+
+        return """
+            <html>
+                <head></head>
+                <body>
+                    <p style="color: red;">You should never see this! There is a serious problem here ....</p>
+                </body>
+            </html>
+        """
 
     # ------------------------- System health test ---------------------------------------------------------------------
     def check_system_health(self):

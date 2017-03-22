@@ -35,6 +35,7 @@ class EcAppParam:
     gcm_expansionCount = LocalParam.gcm_expansionCount
     gcm_max_story_count = LocalParam.gcm_max_story_count
     gcm_getImages = LocalParam.gcm_getImages
+    gcm_startGathering = LocalParam.gcm_startGathering
 
     #: Static files root (copied from :any:`LocalParam`)
     gcm_staticRoot = LocalParam.gcm_appRoot
@@ -66,7 +67,7 @@ class EcAppParam:
     #: Min size of DB connection pool
     gcm_connectionPoolMinCount = 10
     #: Max size of DB connection pool
-    gcm_connectionPoolMaxCount = 30
+    gcm_connectionPoolMaxCount = 5
 
     #: Flag to disable the connection pool feature. If `True` then new connection creation on each request.
     #: Not active at the moment.
@@ -91,5 +92,7 @@ class EcAppParam:
     gcm_height = 1000
 
     gcm_minImageSize = 100
+
+    gcm_sessionDisplayCount = 100
 
 
