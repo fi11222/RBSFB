@@ -419,46 +419,56 @@ class BrowserDriver:
                             self.analyze_story(
                                 l_story, l_storyCount, l_curY, p_storyPrefix=l_storyPrefix, p_obfuscate=p_obfuscate)
 
-                        l_storyDate = l_retStory['date']
+                        if l_retStory is not None:
+                            l_storyDate = l_retStory['date']
 
-                        l_retStory['date'] = l_retStory['date'].strftime('%Y%m%d %H:%M')
-                        l_retStory['date_quoted'] = [d.strftime('%Y%m%d %H:%M') for d in l_retStory['date_quoted']]
-                        l_jsonStore = json.dumps(l_retStory)
-                        l_retStory['images'] = [i[:100] + '...' for i in l_retStory['images']]
-                        print('json [{0}]: {1}'.format(len(l_jsonStore), json.dumps(l_retStory)))
+                            l_retStory['date'] = l_retStory['date'].strftime('%Y%m%d %H:%M')
+                            l_retStory['date_quoted'] = [d.strftime('%Y%m%d %H:%M') for d in l_retStory['date_quoted']]
+                            l_jsonStore = json.dumps(l_retStory)
 
-                        # open database connection
-                        l_connect1 = psycopg2.connect(
-                            host=EcAppParam.gcm_dbServer,
-                            database=EcAppParam.gcm_dbDatabase,
-                            user=EcAppParam.gcm_dbUser,
-                            password=EcAppParam.gcm_dbPassword
-                        )
+                            l_likes = 0
+                            if 'total' in l_retStory['likes'].keys():
+                                l_likes = l_retStory['likes']['total']
 
-                        l_cursor = l_connect1.cursor()
-                        l_cursor.execute(
-                            """
-                                insert into
-                                    "TB_STORY" (
-                                        "ST_SESSION_ID"
-                                        , "DT_CRE"
-                                        , "DT_STORY"
-                                        , "ST_TYPE"
-                                        , "TX_JSON"
-                                    )
-                                values (%s, %s, %s, %s, %s)
-                            ;""", (
-                                self.m_dnl_ses_id,
-                                datetime.datetime.now(),
-                                l_storyDate,
-                                l_retStory['type'],
-                                l_jsonStore
+                            if EcAppParam.gcm_debugModeOn:
+                                l_retStory['images'] = [i[:100] + '...' for i in l_retStory['images']]
+                                l_retStory['html'] = l_retStory['html'][:100] + '...'
+                                self.m_logger.info('json [{0}]: {1}'.format(len(l_jsonStore), json.dumps(l_retStory)))
+
+                            # open database connection
+                            l_connect1 = psycopg2.connect(
+                                host=EcAppParam.gcm_dbServer,
+                                database=EcAppParam.gcm_dbDatabase,
+                                user=EcAppParam.gcm_dbUser,
+                                password=EcAppParam.gcm_dbPassword
                             )
-                        )
-                        l_connect1.commit()
 
-                        # close database connection
-                        l_connect1.close()
+                            l_cursor = l_connect1.cursor()
+                            l_cursor.execute(
+                                """
+                                    insert into
+                                        "TB_STORY" (
+                                            "ST_SESSION_ID"
+                                            , "DT_CRE"
+                                            , "DT_STORY"
+                                            , "ST_TYPE"
+                                            , "TX_JSON"
+                                            , "N_LIKES"
+                                        )
+                                    values (%s, %s, %s, %s, %s, %s)
+                                ;""", (
+                                    self.m_dnl_ses_id,
+                                    datetime.datetime.now(),
+                                    l_storyDate,
+                                    l_retStory['type'],
+                                    l_jsonStore,
+                                    l_likes
+                                )
+                            )
+                            l_connect1.commit()
+
+                            # close database connection
+                            l_connect1.close()
 
                         l_storyCount += 1
                         if p_obfuscate:
@@ -616,14 +626,15 @@ class BrowserDriver:
         # detection of abnormal location parameters --> skip story
         if l_location['x'] == 0 or l_location['y'] == p_curY:
             self.m_logger.info('Location anomaly: {0}'.format(l_location))
-            return p_curY
+            return p_curY, None
 
         # calculation of scroll parameters
         l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
         l_deltaY = l_yTop - p_curY
-        l_curY = l_yTop
+        #l_curY = l_yTop
         l_overshoot = l_location['y'] + l_size['height'] + 50
 
+        # scroll past story (overshoot) and then to top of story.
         if p_obfuscate:
             self.scroll_obfuscate(l_overshoot)
             self.scroll_obfuscate(l_yTop)
@@ -632,6 +643,9 @@ class BrowserDriver:
             self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_overshoot))
             # then scroll to the top of the story
             self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTop))
+
+        # determine actual scroll position in case scroll was hampered by top or bottom of page
+        l_curY = self.m_driver.execute_script('return window.scrollY;')
 
         # previous method with delta, kept for now in reserve
         # self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_deltaY))
@@ -673,17 +687,31 @@ class BrowserDriver:
         l_date = None
         l_dateQuoted = []
         for l_dateContainer in p_story.find_elements_by_xpath('.//abbr[contains(@class, "_5ptz")]'):
-            l_txtDt = re.sub('\,', '', l_dateContainer.get_attribute('title'))
+            l_txtDt = l_dateContainer.get_attribute('title')
+            l_txtDt0 = l_txtDt
+            for l_from, l_to in [(r'\,', r''), (r'\sat\s', r' '),
+                                 (r'(\d+)am', r'\1AM'),
+                                 (r'(\d+)pm', r'\1PM'),
+                                 (r'\s(\d)\s(\d\d\d\d)', r' 0\1 \2'),
+                                 (r'\s(\d):', r' 0\1:'),
+                                 (r':(\d)(AM|PM|$)', r':0\1\2')]:
+                l_txtDt = re.sub(l_from, l_to, l_txtDt)
+
             try:
-                l_dt = datetime.datetime.strptime(l_txtDt, '%A %d %B %Y at %H:%M')
-            except ValueError:
+                l_dt = datetime.datetime.strptime(l_txtDt, '%A %d %B %Y %H:%M')
+            except ValueError as e1:
+                if EcAppParam.gcm_debugModeOn:
+                    print(repr(e1))
                 try:
-                    l_dt = datetime.datetime.strptime(l_txtDt, '%A %d %B %Y at %I:%M%p')
-                except ValueError:
+                    l_dt = datetime.datetime.strptime(l_txtDt, '%A %B %d %Y %I:%M%p')
+                except ValueError as e2:
+                    if EcAppParam.gcm_debugModeOn:
+                        print(repr(e2))
                     l_dt = datetime.datetime.now()
 
             if EcAppParam.gcm_debugModeOn:
-                print('l_txtDt: ' + l_txtDt)
+                print('l_txtDt: [{0}] {1} --> {2}'.format(
+                    l_txtDt0, l_txtDt, l_dt.strftime('%A %B %d/%m/%Y %I:%M%p')))
 
             if l_date is None:
                 # first date found considered as main story date
@@ -728,7 +756,7 @@ class BrowserDriver:
 
         # DATA: (4) determining from
         # types of shared documents (may be found in the same form as from authors and must thus be eliminated)
-        l_shareTypes = ['photo', 'post', 'link', 'event', 'video', 'live video']
+        l_shareTypes = ['photo', 'post', 'link', 'event', 'video', 'live video', 'page']
         # list of author (no deduplication but order preserved)
         l_from = []
         # dictionary of authors (deduplication but order lost)
@@ -736,47 +764,59 @@ class BrowserDriver:
         # _5x46 --> whole post header
         # _5vra --> part of the post header containing the names of the post authors
 
+        # _51mq img sp_ok0d9_HV2Xz sx_66a6bc
+        # _51mq img sp_ok0d9_HV2Xz sx_66a6bc
+        l_sharedList = []
+
         # first case below correspond to multiple authors and the second to single authors
         for l_xpath in ['//div[contains(@class, "_5x46")]//a[contains(@class, "profileLink")]',
                         '//h5[contains(@class, "_5vra")]//a']:
             for l_profLink in l_tree.xpath(l_xpath):
-                # a. full name --> text content of the link
-                l_fromName =  l_profLink.text_content()
+                l_previous = l_profLink.getprevious()
 
-                # b. FB user name
-                l_fromUser = l_profLink.get('href')
-                if l_fromUser is not None and len(l_fromUser) > 0:
-                    # 'https\:\/\/www\.facebook\.com\/Sergei1970sk'
-                    # https://www.facebook.com/solanki.jagdish.75098?hc_ref=NEWSFEED
-                    if re.search('\.php\?id=', l_fromUser):
-                        # human users
-                        l_match = re.search('\.php\?id=(\d+)(&|$)', l_fromUser)
+                if l_previous is not None \
+                    and l_previous.tag == 'i' \
+                    and l_previous.get('class') == '_51mq img sp_ok0d9_HV2Xz sx_66a6bc':
+
+                    l_sharedList.append(('location', l_profLink.get('href')))
+                else:
+                    # a. full name --> text content of the link
+                    l_fromName =  l_profLink.text_content()
+
+                    # b. FB user name
+                    l_fromUser = l_profLink.get('href')
+                    if l_fromUser is not None and len(l_fromUser) > 0:
+                        # 'https\:\/\/www\.facebook\.com\/Sergei1970sk'
+                        # https://www.facebook.com/solanki.jagdish.75098?hc_ref=NEWSFEED
+                        if re.search('\.php\?id=', l_fromUser):
+                            # human users
+                            l_match = re.search('\.php\?id=(\d+)(&|$)', l_fromUser)
+                            if l_match:
+                                l_fromUser = l_match.group(1)
+                        else:
+                            # page users
+                            l_match = re.search('\.com/([^?]+)(\?|$)', l_fromUser)
+                            if l_match:
+                                l_fromUser = l_match.group(1)
+
+                    # c. FB user ID
+                    l_fromId = l_profLink.get('data-hovercard')
+                    if l_fromId is not None and len(l_fromId) > 0:
+                        l_match = re.search('\.php\?id=(\d+)(&|$)', l_fromId)
                         if l_match:
-                            l_fromUser = l_match.group(1)
-                    else:
-                        # page users
-                        l_match = re.search('\.com/([^?]+)(\?|$)', l_fromUser)
-                        if l_match:
-                            l_fromUser = l_match.group(1)
+                            l_fromId = l_match.group(1)
 
-                # c. FB user ID
-                l_fromId = l_profLink.get('data-hovercard')
-                if l_fromId is not None and len(l_fromId) > 0:
-                    l_match = re.search('\.php\?id=(\d+)(&|$)', l_fromId)
-                    if l_match:
-                        l_fromId = l_match.group(1)
-
-                # only record user data if it is not a 'false' user corresponding to a share or like
-                if l_fromName not in l_shareTypes:
-                    # store both in a list and dict
-                    l_from += [(l_fromName, l_fromId, l_fromUser)]
-                    l_fromDict[l_fromId] = (l_fromName, l_fromUser)
+                    # only record user data if it is not a 'false' user corresponding to a share or like
+                    if l_fromName not in l_shareTypes:
+                        # store both in a list and dict
+                        l_from += [(l_fromName, l_fromId, l_fromUser)]
+                        l_fromDict[l_fromId] = (l_fromName, l_fromUser)
 
             if len(l_from) > 0:
                 break
 
-        # DATA: (5) shared object list (post, photo, video ...)
-        l_sharedList = []
+        # DATA: (5) shared object list (post, photo, video ...) + life events + locations
+        # list variable declared above in (4) from
         # _5vra --> part of the post header containing the names of the post authors
         for l_type in l_shareTypes:
             for l in l_tree.xpath('.//h5[contains(@class, "_5vra")]//a[text()="{0}"]'.format(l_type)):
@@ -822,11 +862,17 @@ class BrowserDriver:
             elif re.search('updated (his|her) profile video', l_fromHeader):
                 l_type = 'narcissistic/PV'
             else:
-                # case of 'people you may know' stories (found only in user's own feed)
-                l_fromHeader2 = BrowserDriver.get_unique(l_tree, '//div[contains(@class, "fwn fcg")]')
-                # <div class="fwn fcg"><span class="fwb fcb">People you may know</span></div>
-                if re.search('People you may know', l_fromHeader2):
-                    l_type = 'FB/PYMK'
+                l_lifeEvent = BrowserDriver.get_unique(l_tree, '//a[@class="_39g6"]')
+                if len(l_lifeEvent) > 0:
+                    l_type = 'life_event'
+                    for l_eventLink in l_tree.xpath('//a[@class="_39g6"]'):
+                        l_sharedList.append((l_type, l_eventLink.text_content()))
+                else:
+                    # case of 'people you may know' stories (found only in user's own feed)
+                    l_fromHeader2 = BrowserDriver.get_unique(l_tree, '//div[contains(@class, "fwn fcg")]')
+                    # <div class="fwn fcg"><span class="fwb fcb">People you may know</span></div>
+                    if re.search('People you may know', l_fromHeader2):
+                        l_type = 'FB/PYMK'
 
         # DATA: (9) image extraction
         l_imageList = []
@@ -836,16 +882,18 @@ class BrowserDriver:
             x = l_location['x']
             y = l_location['y'] - l_yTop
 
+            l_img = l_imgStory.crop((x, y, x + l_size['width'], y + l_size['height']))
+
             l_baseName = '{0:03}-'.format(p_iter) + l_id
-
-            if EcAppParam.gcm_verboseModeOn:
+            if EcAppParam.gcm_debugModeOn:
                 # store html source and image of complete story
-                l_img = l_imgStory.crop((x, y, x + l_size['width'], y + l_size['height']))
-
                 l_img.save(l_baseName + '.png')
-
                 with open(l_baseName + '.xml', "w") as l_xml_file:
                     l_xml_file.write(l_html)
+
+            l_outputBuffer = io.BytesIO()
+            l_img.save(l_outputBuffer, format='PNG')
+            l_imageList.append(base64.b64encode(l_outputBuffer.getvalue()).decode())
 
             # extract actual images from the story, if any
             l_imgCount = 0
@@ -874,7 +922,7 @@ class BrowserDriver:
 
                         # do the crop of the whole screen image in order to keep only the image
                         l_imgInStory = l_imgStory.crop((xi, yi, xi + l_width, yi + l_height))
-                        if EcAppParam.gcm_verboseModeOn:
+                        if EcAppParam.gcm_debugModeOn:
                             l_imgInStory.save(l_baseName + '_{0:02}.png'.format(l_imgCount))
                         l_imgCount += 1
 
@@ -885,6 +933,35 @@ class BrowserDriver:
                 # if first xpath worked --> no nee to try the second
                 if l_imgCount > 0:
                     break
+
+        # DATA: (10) likes
+        l_likesValues = dict()
+        l_likesTotalTxt = BrowserDriver.get_unique(l_tree, '//a[@class="_2x4v"]/span[@class="_4arz"]')
+        self.m_logger.info('l_likesTotalTxt: {0}'.format(l_likesTotalTxt))
+        l_likesTotal = None
+        if len(l_likesTotalTxt) > 0:
+            try:
+                l_likesTotal = int(l_likesTotalTxt)
+            except ValueError:
+                self.m_logger.warning('Found likes total but not int value: {0}'.format(l_likesTotalTxt))
+                l_likesTotal = -1
+
+        if l_likesTotal is not None:
+            l_likesValues['total'] =  l_likesTotal
+
+        for l_likeElement in l_tree.xpath('//span[@class="_3t54"]/a[@class="_3emk"]'):
+            l_likeTxt = l_likeElement.get('aria-label')
+            l_found = re.search('(\d+)\s(.+)', l_likeTxt)
+            if l_found:
+                l_likeCountTxt = l_found.group(1)
+                l_likeType = l_found.group(2)
+                try:
+                    l_likeCount = int(l_likeCountTxt)
+                except ValueError:
+                    self.m_logger.warning('Found likes value but not int value: {0}'.format(l_likeCountTxt))
+                    l_likeCount = -1
+
+                l_likesValues[l_likeType] = l_likeCount
 
         l_retStory = dict()
         l_retStory['id'] = l_id
@@ -899,6 +976,8 @@ class BrowserDriver:
         l_retStory['text_quoted'] = l_quotedText
         l_retStory['date_quoted'] = l_dateQuoted
         l_retStory['images'] = l_imageList
+        l_retStory['html'] = l_html
+        l_retStory['likes'] = l_likesValues
 
         if EcAppParam.gcm_verboseModeOn:
             print('l_fromHeader   : ' + l_fromHeader)

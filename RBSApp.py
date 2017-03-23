@@ -10,6 +10,7 @@ from openvpn import OpenvpnWrapper
 
 import random
 import sys
+import locale
 from socketserver import ThreadingMixIn
 
 __author__ = 'Pavan Mahalingam'
@@ -156,7 +157,7 @@ class RbsApp(EcAppCore):
                     """.format(l_sessionId))
 
             l_response = ''
-            for l_idStory, l_sessionId, l_dtStory, l_dtCre, l_stType, l_json in l_cursor:
+            for l_idStory, l_sessionId, l_dtStory, l_dtCre, l_stType, l_json, l_likes in l_cursor:
                 l_story = json.loads(l_json)
                 l_imgCount = len(l_story['images'])
                 l_text = l_story['text'][:50]
@@ -166,9 +167,10 @@ class RbsApp(EcAppCore):
                 if len(l_textQ) != len(l_story['text_quoted']):
                     l_textQ += '...'
                 if len(l_text + l_textQ) > 0:
-                    l_displayText = l_text + '/' + l_textQ
+                    l_displayText = l_text + '■■■' + l_textQ
                 else:
                     l_displayText = ''
+
                 l_response += """
                             <tr>
                                 <td style="padding-right:1em;"><a href="/story/{0}">{0}</a></td>
@@ -176,13 +178,14 @@ class RbsApp(EcAppCore):
                                 <td style="padding-right:1em;">{2}</td>
                                 <td style="padding-right:1em;">{3}</td>
                                 <td style="padding-right:1em;">{4}</td>
-                                <td>{5}</td>
+                                <td style="padding-right:1em;">{5}</td>
+                                <td>{6}</td>
                             <tr/>
                         """.format(
                     l_idStory,
                     l_dtStory.strftime('%d/%m/%Y %H:%M'),
                     l_dtCre.strftime('%d/%m/%Y %H:%M'),
-                    l_stType, l_imgCount, l_displayText
+                    l_stType, l_likes, l_imgCount, l_displayText
                 )
         except Exception as e:
             self.m_logger.warning('TB_STORY query failure: {0}'.format(repr(e)))
@@ -203,7 +206,9 @@ class RbsApp(EcAppCore):
                                 <td style="font-weight: bold; padding-right:1em;">DT_STORY</td>
                                 <td style="font-weight: bold; padding-right:1em;">DT_CRE</td>
                                 <td style="font-weight: bold; padding-right:1em;">ST_TYPE</td>
-                                <td style="font-weight: bold;">img. Count</td>
+                                <td style="font-weight: bold; padding-right:1em;">N_LIKES</td>
+                                <td style="font-weight: bold; padding-right:1em;">img.&nbsp;Count</td>
+                                <td style="font-weight: bold;">Text■■■Quoted text</td>
                             <tr/>
                             {1}
                         </table>
@@ -224,7 +229,7 @@ class RbsApp(EcAppCore):
                             """.format(l_storyId))
 
             l_response = ''
-            for l_idStory, l_sessionId, l_dtStory, l_dtCre, l_stType, l_json in l_cursor:
+            for l_idStory, l_sessionId, l_dtStory, l_dtCre, l_stType, l_json, l_likes in l_cursor:
                 l_story = json.loads(l_json)
 
                 #<img src="data:image/jpeg;base64,
@@ -233,6 +238,15 @@ class RbsApp(EcAppCore):
                     l_imgDisplay += """
                         <img src="data:image/png;base64,{0}">
                     """.format(l_imgB64)
+
+                l_html_disp = l_story['html'] if 'html' in l_story.keys() else ''
+                l_html_disp = re.sub(r'<', r'&lt;', l_html_disp)
+                l_html_disp = re.sub(r'>', r'&gt;&#8203;', l_html_disp)
+                #l_html_disp = re.sub(r'>', r'&gt; ', l_html_disp)
+
+                l_likes = ''
+                if 'likes' in l_story.keys():
+                    l_likes = repr(l_story['likes'])
 
                 l_response += """
                     <tr>
@@ -276,7 +290,14 @@ class RbsApp(EcAppCore):
                         <td>{9}</td>
                     <tr/>
                     <tr>
-                        <td colspan="2">{10}</td>
+                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Likes:</td>
+                        <td>{10}</td>
+                    <tr/>
+                    <tr>
+                        <td colspan="2">{11}</td>
+                    <tr/>
+                    <tr>
+                        <td colspan="2" style="word-wrap:break-word;">{12}</td>
                     <tr/>
                 """.format(
                     l_idStory
@@ -289,7 +310,9 @@ class RbsApp(EcAppCore):
                     , repr(l_story['shared'])
                     , 'Yes' if l_story['sponsored'] else 'No'
                     , 'Yes' if l_story['with'] else 'No'
+                    , l_likes
                     , l_imgDisplay
+                    , l_html_disp
                 )
         except Exception as e:
             self.m_logger.warning('TB_STORY query failure: {0}'.format(repr(e)))
@@ -403,9 +426,15 @@ class StartApp:
             ))
             sys.exit(0)
 
-        EcLogger.root_logger().info('gcm_appName    : ' + EcAppParam.gcm_appName)
-        EcLogger.root_logger().info('gcm_appVersion : ' + EcAppParam.gcm_appVersion)
-        EcLogger.root_logger().info('gcm_appTitle   : ' + EcAppParam.gcm_appTitle)
+        l_locale, l_encoding = locale.getlocale(locale.LC_TIME)
+        if l_locale is None:
+            locale.setlocale(locale.LC_TIME, locale.getlocale(locale.LC_CTYPE))
+
+        EcLogger.root_logger().info('gcm_appName       : ' + EcAppParam.gcm_appName)
+        EcLogger.root_logger().info('gcm_appVersion    : ' + EcAppParam.gcm_appVersion)
+        EcLogger.root_logger().info('gcm_appTitle      : ' + EcAppParam.gcm_appTitle)
+        EcLogger.root_logger().info('locale (LC_CTYPE) : {0}'.format(locale.getlocale(locale.LC_CTYPE)))
+        EcLogger.root_logger().info('locale (LC_TIME)  : {0}'.format(locale.getlocale(locale.LC_TIME)))
 
         # final success message (sends an e-mail message because it is a warning)
         EcLogger.cm_logger.warning('Server up and running at [{0}:{1}]'
