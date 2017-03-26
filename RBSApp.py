@@ -157,7 +157,9 @@ class RbsApp(EcAppCore):
                     """.format(l_sessionId))
 
             l_response = ''
-            for l_idStory, l_sessionId, l_dtStory, l_dtCre, l_stType, l_json, l_likes in l_cursor:
+            for l_idStory, l_sessionId, l_dtStory, l_dtCre, l_stType, \
+                l_json, l_likes, l_comments, l_shares in l_cursor:
+
                 l_story = json.loads(l_json)
                 l_imgCount = len(l_story['images'])
                 l_text = l_story['text'][:50]
@@ -179,13 +181,15 @@ class RbsApp(EcAppCore):
                                 <td style="padding-right:1em;">{3}</td>
                                 <td style="padding-right:1em;">{4}</td>
                                 <td style="padding-right:1em;">{5}</td>
-                                <td>{6}</td>
+                                <td style="padding-right:1em;">{6}</td>
+                                <td style="padding-right:1em;">{7}</td>
+                                <td>{8}</td>
                             <tr/>
                         """.format(
                     l_idStory,
-                    l_dtStory.strftime('%d/%m/%Y %H:%M'),
-                    l_dtCre.strftime('%d/%m/%Y %H:%M'),
-                    l_stType, l_likes, l_imgCount, l_displayText
+                    l_dtStory.strftime('%d/%m/%Y&nbsp;%H:%M') if l_dtStory is not None else 'NULL',
+                    l_dtCre.strftime('%d/%m/%Y&nbsp;%H:%M'),
+                    l_stType, l_likes, l_comments, l_shares, l_imgCount, l_displayText
                 )
         except Exception as e:
             self.m_logger.warning('TB_STORY query failure: {0}'.format(repr(e)))
@@ -206,8 +210,10 @@ class RbsApp(EcAppCore):
                                 <td style="font-weight: bold; padding-right:1em;">DT_STORY</td>
                                 <td style="font-weight: bold; padding-right:1em;">DT_CRE</td>
                                 <td style="font-weight: bold; padding-right:1em;">ST_TYPE</td>
-                                <td style="font-weight: bold; padding-right:1em;">N_LIKES</td>
-                                <td style="font-weight: bold; padding-right:1em;">img.&nbsp;Count</td>
+                                <td style="font-weight: bold; padding-right:1em; font-size:60%;">N_LIKES</td>
+                                <td style="font-weight: bold; padding-right:1em; font-size:60%;">N_COMMENTS</td>
+                                <td style="font-weight: bold; padding-right:1em; font-size:60%;">N_SHARES</td>
+                                <td style="font-weight: bold; padding-right:1em; font-size:60%;">Img.&nbsp;#</td>
                                 <td style="font-weight: bold;">Text■■■Quoted text</td>
                             <tr/>
                             {1}
@@ -229,7 +235,9 @@ class RbsApp(EcAppCore):
                             """.format(l_storyId))
 
             l_response = ''
-            for l_idStory, l_sessionId, l_dtStory, l_dtCre, l_stType, l_json, l_likes in l_cursor:
+            for l_idStory, l_sessionId, l_dtStory, l_dtCre, \
+                l_stType, l_json, l_likes, l_comments, l_shares in l_cursor:
+
                 l_story = json.loads(l_json)
 
                 #<img src="data:image/jpeg;base64,
@@ -294,10 +302,18 @@ class RbsApp(EcAppCore):
                         <td>{10}</td>
                     <tr/>
                     <tr>
-                        <td colspan="2">{11}</td>
+                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Comments:</td>
+                        <td>[{11}] {12}</td>
                     <tr/>
                     <tr>
-                        <td colspan="2" style="word-wrap:break-word;">{12}</td>
+                        <td style="padding-right:1em; font-weight: bold; vertical-align: top;">Shares:</td>
+                        <td>{13}</td>
+                    <tr/>
+                    <tr>
+                        <td colspan="2">{14}</td>
+                    <tr/>
+                    <tr>
+                        <td colspan="2" style="word-wrap:break-word;">{15}</td>
                     <tr/>
                 """.format(
                     l_idStory
@@ -311,6 +327,8 @@ class RbsApp(EcAppCore):
                     , 'Yes' if l_story['sponsored'] else 'No'
                     , 'Yes' if l_story['with'] else 'No'
                     , l_likes
+                    , l_comments, repr(l_story['comments']) if 'comments' in l_story.keys() else ''
+                    , l_story['shares'] if 'shares' in l_story.keys() else ''
                     , l_imgDisplay
                     , l_html_disp
                 )

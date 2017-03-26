@@ -20,6 +20,7 @@ import random
 import subprocess
 import json
 import base64
+import copy
 
 from ec_utilities import *
 import openvpn
@@ -135,6 +136,8 @@ class BrowserDriver:
 
         self.login_as_scrape(p_user, p_pwd, p_vpn)
 
+        self.m_dnl_ses_id = None
+
     def isStale(self):
         """
         Past expiration date flag.
@@ -222,6 +225,7 @@ class BrowserDriver:
             l_settings.click()
         except EX.TimeoutException:
             self.m_logger.critical('Did not find settings arrow down button')
+            self.dump_html()
             raise
 
         try:
@@ -233,12 +237,18 @@ class BrowserDriver:
             l_logoutButton.click()
         except EX.TimeoutException:
             self.m_logger.critical('Did not find logout button')
+            self.dump_html()
             raise
 
         # close vpn if present
         if self.m_vpn_handle is not None:
             self.m_vpn_handle.close()
             self.m_vpn_handle = None
+
+    def dump_html(self):
+        l_html = self.m_driver.find_element_by_xpath('//html').get_attribute('outerHTML')
+        with open(datetime.datetime.now().strftime('%Y%m%d_%H%M%S.html'), 'w') as f:
+            f.write(l_html)
 
     def go_random(self):
         """
@@ -296,29 +306,68 @@ class BrowserDriver:
         for l_id, l_id_internal, l_userId in l_cursor:
             break
 
+        # close database connection
+        l_connect1.close()
+
         self.m_logger.info('FB ID: {0}'.format(l_id))
         self.m_logger.info('FB UID: {0}'.format(l_userId))
 
         # go to the user's page and wait for the page to load
-        if l_userId is not None:
-            self.m_driver.get('http://www.facebook.com/{0}'.format(l_userId))
-        else:
-            self.m_driver.get('http://www.facebook.com/{0}'.format(l_id))
+        self.go_to_id(l_id, l_userId, l_id_internal)
 
-        try:
-            # wait for mainContainer
-            WebDriverWait(self.m_driver, 15).until(
-                EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
-        except EX.TimeoutException:
-            self.m_logger.critical('Did not find user\'s page mainContainer. Id: {0}'.format(l_id))
-            raise
+        return l_id
+
+    def go_to_id(self, p_id, p_userId, p_idInternal=None):
+        """
+        Go to the specified user page. Both `p_id` and `p_userId` cannot be `None`.
+
+        :param p_id: Can be either a numeric ID or `None`.
+        :param p_userId: Can be either a string user ID or `None`.
+        :param p_idInternal: Internal ID in `TB_USER`.
+        :return: Nothing.
+        """
+
+        if p_userId is None:
+            self.m_driver.get('http://www.facebook.com/{0}'.format(p_id))
+        else:
+            self.m_driver.get('http://www.facebook.com/{0}'.format(p_userId))
+
+        # connects to the database
+        l_connect1 = psycopg2.connect(
+            host=EcAppParam.gcm_dbServer,
+            database=EcAppParam.gcm_dbDatabase,
+            user=EcAppParam.gcm_dbUser,
+            password=EcAppParam.gcm_dbPassword
+        )
+
+        l_id_internal = None
+        if p_idInternal is None:
+            l_cursor = l_connect1.cursor()
+            l_query = """
+                select
+                    "ID_INTERNAL"
+                from
+                    "TB_USER"
+                where
+                    "{0}" = '{1}'
+                ;""".format(
+                    'ID' if p_userId is None else 'ST_USER_ID',
+                    p_id if p_userId is None else p_userId,
+                )
+
+            l_cursor.execute(l_query)
+            for l_id_internal, in l_cursor:
+                break
+        else:
+            l_id_internal = p_idInternal
 
         # retrieve user ID from url if not already known
-        if l_userId is None:
+        if p_userId is None:
             l_url = self.m_driver.current_url
             self.m_logger.info('Current url [{0}]'.format(l_url))
 
-            l_userId = re.sub('https://www\.facebook\.com/', '', l_url)
+            l_userId = re.sub('^https://www\.facebook\.com/', '', l_url)
+            l_userId = re.sub('^profile\.php\?', '', l_userId)
             self.m_logger.info('FB user ID [{0}]'.format(l_userId))
 
             if l_id_internal is not None:
@@ -332,6 +381,8 @@ class BrowserDriver:
                                 "ID_INTERNAL" = %s
                             ;""", (l_userId, l_id_internal))
                 l_connect1.commit()
+        else:
+            l_userId = p_userId
 
         # initiate download session
         l_now = datetime.datetime.now()
@@ -348,7 +399,13 @@ class BrowserDriver:
         # close database connection
         l_connect1.close()
 
-        return l_id
+        try:
+            # wait for mainContainer
+            WebDriverWait(self.m_driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
+        except EX.TimeoutException:
+            self.m_logger.critical('Did not find user\'s page mainContainer. Id: {0}'.format(p_id))
+            raise
 
     def get_fb_profile(self, p_isOwnFeed=False, p_obfuscate=True):
         """
@@ -422,13 +479,30 @@ class BrowserDriver:
                         if l_retStory is not None:
                             l_storyDate = l_retStory['date']
 
-                            l_retStory['date'] = l_retStory['date'].strftime('%Y%m%d %H:%M')
+                            if EcAppParam.gcm_debugModeOn:
+                                l_retStory1 = copy.deepcopy(l_retStory)
+                                l_retStory1['images'] = [i[:100] + '...' for i in l_retStory1['images']]
+                                l_retStory1['html'] = l_retStory1['html'][:100] + '...'
+                                self.m_logger.info('repr: {0}'.format(repr(l_retStory1)))
+
+                            if l_retStory['date'] is not None:
+                                l_retStory['date'] = l_retStory['date'].strftime('%Y%m%d %H:%M')
                             l_retStory['date_quoted'] = [d.strftime('%Y%m%d %H:%M') for d in l_retStory['date_quoted']]
+                            if 'comments' in l_retStory.keys():
+                                l_retStory['comments'] = [{
+                                        'authors': l_com['authors'],
+                                        'text': l_com['text'],
+                                        'date': l_com['date'].strftime('%Y%m%d %H:%M'),
+                                    } for l_com in l_retStory['comments']
+                                ]
                             l_jsonStore = json.dumps(l_retStory)
 
                             l_likes = 0
                             if 'total' in l_retStory['likes'].keys():
                                 l_likes = l_retStory['likes']['total']
+
+                            l_commentsCount = l_retStory['comments_count']
+                            l_shareCount = l_retStory['shares']
 
                             if EcAppParam.gcm_debugModeOn:
                                 l_retStory['images'] = [i[:100] + '...' for i in l_retStory['images']]
@@ -454,15 +528,17 @@ class BrowserDriver:
                                             , "ST_TYPE"
                                             , "TX_JSON"
                                             , "N_LIKES"
+                                            , "N_COMMENTS"
+                                            , "N_SHARES"
                                         )
-                                    values (%s, %s, %s, %s, %s, %s)
+                                    values (%s, %s, %s, %s, %s, %s, %s, %s)
                                 ;""", (
                                     self.m_dnl_ses_id,
                                     datetime.datetime.now(),
                                     l_storyDate,
                                     l_retStory['type'],
                                     l_jsonStore,
-                                    l_likes
+                                    l_likes, l_commentsCount, l_shareCount
                                 )
                             )
                             l_connect1.commit()
@@ -487,68 +563,9 @@ class BrowserDriver:
             if l_storyCount > EcAppParam.gcm_max_story_count or l_fruitlessTries > 3:
                 break
 
-    def get_fb_feed_old(self):
-        """
-        Get the user's own feed
-
-        :return: Nothing
-        """
-        self.m_logger.info("get_fb_feed()")
-
-        l_storyPrefix = 'hyperfeed_story_id_'
-
-        WebDriverWait(self.m_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "{0}")]'.format(l_storyPrefix))))
-
-        self.m_logger.info('presence of {0}'.format(l_storyPrefix))
-
-        WebDriverWait(self.m_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "more_pager_pagelet_")]')))
-
-        self.m_logger.info("presence of more_pager_pagelet_")
-
-        l_expansionCount = EcAppParam.gcm_expansionCount
-
-        while True:
-            l_pagers_found = 0
-            l_last_pager = None
-            for l_last_pager in self.m_driver.find_elements_by_xpath('//div[contains(@id, "more_pager_pagelet_")]'):
-                l_pagers_found += 1
-
-            self.m_logger.info('Expanding pager #{0}'.format(l_pagers_found))
-            if l_last_pager is not None:
-                self.m_driver.execute_script("return arguments[0].scrollIntoView();", l_last_pager)
-
-            if l_pagers_found >= l_expansionCount:
-                break
-
-        l_stab_iter = 0
-        while True:
-            l_finished = True
-            for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "{0}")]'.format(l_storyPrefix)):
-                try:
-                    l_data_ft = l_story.get_attribute('data-ft')
-
-                    if l_data_ft is not None:
-                        l_finished = False
-                except EX.StaleElementReferenceException:
-                    continue
-
-            self.m_logger.info('Stab loop #{0}'.format(l_stab_iter))
-            l_stab_iter += 1
-            if l_finished:
-                break
-
-        self.m_driver.execute_script('window.scrollTo(0, 0);')
-        l_curY = 0
-        l_iter_dispo = 0
-        for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "{0}")]'.format(l_storyPrefix)):
-            try:
-                l_curY = self.analyze_story(l_story, l_iter_dispo, l_curY)
-
-                l_iter_dispo += 1
-            except EX.StaleElementReferenceException:
-                print('***** STALE ! ******')
+        # mark the session as complete
+        self.m_logger.info('Session [{0}] Complete'.format(self.m_dnl_ses_id))
+        self.m_dnl_ses_id = None
 
     def scroll_obfuscate(self, y):
         l_stepCount = random.randint(5,15)
@@ -593,6 +610,56 @@ class BrowserDriver:
             l_action.context_click()
             l_action.perform()
             time.sleep(p_delay/l_delay_steps)
+
+    def date_from_text(self, p_txtDt):
+        l_txtDt0 = p_txtDt
+        for l_from, l_to in [(r'\,', r''), (r'\sat\s', r' '),
+                             (r'(\d+)am', r'\1AM'),
+                             (r'(\d+)pm', r'\1PM'),
+                             (r'\s(\d)\s(\d\d\d\d)', r' 0\1 \2'),
+                             (r'\s(\d):', r' 0\1:'),
+                             (r':(\d)(AM|PM|$)', r':0\1\2')]:
+            p_txtDt = re.sub(l_from, l_to, p_txtDt)
+
+        try:
+            l_dt = datetime.datetime.strptime(p_txtDt, '%A %d %B %Y %H:%M')
+        except ValueError as e1:
+            if EcAppParam.gcm_debugModeOn:
+                print(repr(e1))
+            try:
+                l_dt = datetime.datetime.strptime(p_txtDt, '%A %B %d %Y %I:%M%p')
+            except ValueError as e2:
+                if EcAppParam.gcm_debugModeOn:
+                    print(repr(e2))
+                l_dt = datetime.datetime.now()
+
+        if EcAppParam.gcm_debugModeOn:
+            print('l_txtDt: [{0}] {1} --> {2}'.format(
+                l_txtDt0, p_txtDt, l_dt.strftime('%A %B %d/%m/%Y %I:%M%p')))
+
+        return l_dt
+
+    def value_from_text(self, p_txt):
+        """
+        Tries to convert a string into a numeric value according to Facebook conventions:
+        * plain integer
+        * string of the form 'xx.yy K'
+
+        :param p_txt: The text to convert
+        :return: The resulting numeric value or -1 if failed
+        """
+        l_value = -1
+        l_txt = re.sub(',', '.', p_txt.strip())
+        try:
+            l_value = int(l_txt)
+        except ValueError:
+            l_txt = re.sub('(k|K)$', '', l_txt).strip()
+            try:
+                l_value = float(l_txt) * 1000
+            except ValueError as e:
+                self.m_logger.warning('Could not convert string: "{0}" to numeric [{1}]'.format(p_txt, repr(e)))
+
+        return l_value
 
     def analyze_story(self, p_story, p_iter, p_curY, p_storyPrefix='hyperfeed_story_id_', p_obfuscate=True):
         """
@@ -675,7 +742,7 @@ class BrowserDriver:
                 break
             else:
                 l_dataWait += 1
-                if l_dataWait % 10 == 0:
+                if l_dataWait % 10 == 0 and EcAppParam.gcm_debugModeOn:
                     print('l_data_ft [{0}]: {1}'.format(l_dataWait, l_data_ft[:50]))
 
             time.sleep(.05)
@@ -683,44 +750,87 @@ class BrowserDriver:
         # build an lxml analyser out of the html
         l_tree = html.fromstring(l_html)
 
-        # DATA: (1) Date(s)
-        l_date = None
+        # DATA: (1) detection of sponsored content
+        l_sponsored = (len(l_tree.xpath('.//a[text()="Sponsored"]')) > 0)
+
+        # raw text from the main header and of the sub-header (quoted content), if any
+        l_fromHeader = BrowserDriver.get_unique(l_tree, '//h5[contains(@class, "_5vra")]')
+        l_fromHeaderSub = BrowserDriver.get_unique(l_tree, '//h6[contains(@class, "_5vra")]')
+
+        # DATA: (2) determines if the list of authors contains a 'with' marker
+        l_hasWith = False
+        if re.search('with', l_fromHeader) or re.search('with', l_fromHeaderSub):
+            l_hasWith = True
+
+        # types of shared documents (may be found in the same form as from authors and must thus be eliminated)
+        l_shareTypes = ['photo', 'post', 'link', 'event', 'video', 'live video', 'page']
+
+        # DATA: (3) shared object list (post, photo, video ...) + life events + locations
+        # _5vra --> part of the post header containing the names of the post authors
+        l_sharedList = []
+        for l_type in l_shareTypes:
+            for l in l_tree.xpath('.//h5[contains(@class, "_5vra")]//a[text()="{0}"]'.format(l_type)):
+                l_sharedList.append((l_type, l.get('href')))
+
+        # DATA: (4) determining story type
+        # by default, it is a post
+        l_type = 'post'
+        if l_sponsored:
+            # sponsored type
+            l_type = 'sponsored'
+        else:
+            # special cases of 'share': memory
+            if re.search('shared a memory', l_fromHeader):
+                l_type = 'memory'
+            # other cases cases of share or like of previously existing content
+            elif re.search('shared|liked', l_fromHeader):
+                if re.search('shared', l_fromHeader):
+                    l_type = 'share'
+                else:
+                    l_type = 'like'
+
+                # subtype of share/like given by the type of the first element of the quoted content list
+                if len(l_sharedList) > 0:
+                    l_type += '/{0}'.format(l_sharedList[0][0])
+
+            # other types of posts
+            elif re.search('commented on this', l_fromHeader):
+                l_type = 'comment'
+            elif re.search('updated (his|her) profile picture', l_fromHeader):
+                l_type = 'narcissistic/PP'
+            elif re.search('updated (his|her) cover photo', l_fromHeader):
+                l_type = 'narcissistic/CP'
+            elif re.search('updated (his|her) profile video', l_fromHeader):
+                l_type = 'narcissistic/PV'
+            elif re.search('(friends|friend) ​posted​ on (\S+) Timeline', l_fromHeader):
+                l_type = 'wall'
+            else:
+                l_lifeEvent = BrowserDriver.get_unique(l_tree, '//a[@class="_39g6"]')
+                if len(l_lifeEvent) > 0:
+                    l_type = 'life_event'
+                    for l_eventLink in l_tree.xpath('//a[@class="_39g6"]'):
+                        l_sharedList.append((l_type, l_eventLink.text_content()))
+                else:
+                    # case of 'people you may know' stories (found only in user's own feed)
+                    l_fromHeader2 = BrowserDriver.get_unique(l_tree, '//div[contains(@class, "fwn fcg")]')
+                    # <div class="fwn fcg"><span class="fwb fcb">People you may know</span></div>
+                    if re.search('People you may know', l_fromHeader2):
+                        l_type = 'FB/PYMK'
+
+        # DATA: (5) Date(s)
+        l_datePost = None
         l_dateQuoted = []
         for l_dateContainer in p_story.find_elements_by_xpath('.//abbr[contains(@class, "_5ptz")]'):
-            l_txtDt = l_dateContainer.get_attribute('title')
-            l_txtDt0 = l_txtDt
-            for l_from, l_to in [(r'\,', r''), (r'\sat\s', r' '),
-                                 (r'(\d+)am', r'\1AM'),
-                                 (r'(\d+)pm', r'\1PM'),
-                                 (r'\s(\d)\s(\d\d\d\d)', r' 0\1 \2'),
-                                 (r'\s(\d):', r' 0\1:'),
-                                 (r':(\d)(AM|PM|$)', r':0\1\2')]:
-                l_txtDt = re.sub(l_from, l_to, l_txtDt)
+            l_dt = self.date_from_text(l_dateContainer.get_attribute('title'))
 
-            try:
-                l_dt = datetime.datetime.strptime(l_txtDt, '%A %d %B %Y %H:%M')
-            except ValueError as e1:
-                if EcAppParam.gcm_debugModeOn:
-                    print(repr(e1))
-                try:
-                    l_dt = datetime.datetime.strptime(l_txtDt, '%A %B %d %Y %I:%M%p')
-                except ValueError as e2:
-                    if EcAppParam.gcm_debugModeOn:
-                        print(repr(e2))
-                    l_dt = datetime.datetime.now()
-
-            if EcAppParam.gcm_debugModeOn:
-                print('l_txtDt: [{0}] {1} --> {2}'.format(
-                    l_txtDt0, l_txtDt, l_dt.strftime('%A %B %d/%m/%Y %I:%M%p')))
-
-            if l_date is None:
+            if l_datePost is None:
                 # first date found considered as main story date
-                l_date = l_dt
+                l_datePost = l_dt
             else:
                 # other dates considered as coming from quoted parts (shared post, ...)
                 l_dateQuoted.append(l_dt)
 
-        # DATA: (2) main text
+        # DATA: (6) main text
         l_postText = ''
         # text found in the 'userContent' marked section. But 'userContentWrapper' must be avoided
         for l_pt in p_story.find_elements_by_xpath(
@@ -735,7 +845,7 @@ class BrowserDriver:
             if l_postText is not None and len(l_postText) > 0:
                 break
 
-        # DATA: (3) quoted text
+        # DATA: (7) quoted text
         l_quotedText = ''
         # _5r69 --> Quoted portion (normally) otherwise, class containing 'mtm'
         for l_xpath in ['.//div[@class="_5r69"]', './/div[contains(@class, "mtm")]']:
@@ -754,9 +864,7 @@ class BrowserDriver:
             if l_quotedText is not None and len(l_quotedText) > 0:
                 break
 
-        # DATA: (4) determining from
-        # types of shared documents (may be found in the same form as from authors and must thus be eliminated)
-        l_shareTypes = ['photo', 'post', 'link', 'event', 'video', 'live video', 'page']
+        # DATA: (8) determining from
         # list of author (no deduplication but order preserved)
         l_from = []
         # dictionary of authors (deduplication but order lost)
@@ -764,22 +872,25 @@ class BrowserDriver:
         # _5x46 --> whole post header
         # _5vra --> part of the post header containing the names of the post authors
 
-        # _51mq img sp_ok0d9_HV2Xz sx_66a6bc
-        # _51mq img sp_ok0d9_HV2Xz sx_66a6bc
-        l_sharedList = []
-
-        # first case below correspond to multiple authors and the second to single authors
+        # first case below corresponds to multiple authors and the second to single authors
+        # the third one corresponds to wall postings by others (type = 'wall')
         for l_xpath in ['//div[contains(@class, "_5x46")]//a[contains(@class, "profileLink")]',
-                        '//h5[contains(@class, "_5vra")]//a']:
+                        '//h5[contains(@class, "_5vra")]//a',
+                        '//h6[contains(@class, "_5vra")]//a']:
+
             for l_profLink in l_tree.xpath(l_xpath):
                 l_previous = l_profLink.getprevious()
 
+                # identification of location links --> list of shared objects and not 'from'
                 if l_previous is not None \
                     and l_previous.tag == 'i' \
                     and l_previous.get('class') == '_51mq img sp_ok0d9_HV2Xz sx_66a6bc':
+                    # _51mq img sp_ok0d9_HV2Xz sx_66a6bc
 
                     l_sharedList.append(('location', l_profLink.get('href')))
                 else:
+                    # real from links (not locations)
+
                     # a. full name --> text content of the link
                     l_fromName =  l_profLink.text_content()
 
@@ -807,72 +918,14 @@ class BrowserDriver:
                             l_fromId = l_match.group(1)
 
                     # only record user data if it is not a 'false' user corresponding to a share or like
-                    if l_fromName not in l_shareTypes:
+                    # or to a wall posting link (type = 'wall')
+                    if l_fromName not in l_shareTypes and l_fromName != 'posted':
                         # store both in a list and dict
                         l_from += [(l_fromName, l_fromId, l_fromUser)]
                         l_fromDict[l_fromId] = (l_fromName, l_fromUser)
 
             if len(l_from) > 0:
                 break
-
-        # DATA: (5) shared object list (post, photo, video ...) + life events + locations
-        # list variable declared above in (4) from
-        # _5vra --> part of the post header containing the names of the post authors
-        for l_type in l_shareTypes:
-            for l in l_tree.xpath('.//h5[contains(@class, "_5vra")]//a[text()="{0}"]'.format(l_type)):
-                l_sharedList.append((l_type, l.get('href')))
-
-        # DATA: (6) detection of sponsored content
-        l_sponsored = (len(l_tree.xpath('.//a[text()="Sponsored"]')) > 0)
-
-        # raw text from the main header and of the sub-header (quoted content), if any
-        l_fromHeader = BrowserDriver.get_unique(l_tree, '//h5[contains(@class, "_5vra")]')
-        l_fromHeaderSub = BrowserDriver.get_unique(l_tree, '//h6[contains(@class, "_5vra")]')
-
-        # DATA: (7) determines if the list of authors contains a 'with' marker
-        l_hasWith = False
-        if re.search('with', l_fromHeader) or re.search('with', l_fromHeaderSub):
-            l_hasWith = True
-
-        # DATA: (8) determining story type
-        # by default, it is a post
-        l_type = 'post'
-        if l_sponsored:
-            # sponsored type
-            l_type = 'sponsored'
-        else:
-            # cases of share or like of previously existing content
-            if re.search('shared|liked', l_fromHeader):
-                if re.search('shared', l_fromHeader):
-                    l_type = 'share'
-                else:
-                    l_type = 'like'
-
-                # subtype of share/like given by the type of the first element of the quoted content list
-                if len(l_sharedList) > 0:
-                    l_type += '/{0}'.format(l_sharedList[0][0])
-
-            # other types of posts
-            elif re.search('commented on this', l_fromHeader):
-                l_type = 'comment'
-            elif re.search('updated (his|her) profile picture', l_fromHeader):
-                l_type = 'narcissistic/PP'
-            elif re.search('updated (his|her) cover photo', l_fromHeader):
-                l_type = 'narcissistic/CP'
-            elif re.search('updated (his|her) profile video', l_fromHeader):
-                l_type = 'narcissistic/PV'
-            else:
-                l_lifeEvent = BrowserDriver.get_unique(l_tree, '//a[@class="_39g6"]')
-                if len(l_lifeEvent) > 0:
-                    l_type = 'life_event'
-                    for l_eventLink in l_tree.xpath('//a[@class="_39g6"]'):
-                        l_sharedList.append((l_type, l_eventLink.text_content()))
-                else:
-                    # case of 'people you may know' stories (found only in user's own feed)
-                    l_fromHeader2 = BrowserDriver.get_unique(l_tree, '//div[contains(@class, "fwn fcg")]')
-                    # <div class="fwn fcg"><span class="fwb fcb">People you may know</span></div>
-                    if re.search('People you may know', l_fromHeader2):
-                        l_type = 'FB/PYMK'
 
         # DATA: (9) image extraction
         l_imageList = []
@@ -936,18 +989,16 @@ class BrowserDriver:
 
         # DATA: (10) likes
         l_likesValues = dict()
-        l_likesTotalTxt = BrowserDriver.get_unique(l_tree, '//a[@class="_2x4v"]/span[@class="_4arz"]')
-        self.m_logger.info('l_likesTotalTxt: {0}'.format(l_likesTotalTxt))
-        l_likesTotal = None
-        if len(l_likesTotalTxt) > 0:
-            try:
-                l_likesTotal = int(l_likesTotalTxt)
-            except ValueError:
-                self.m_logger.warning('Found likes total but not int value: {0}'.format(l_likesTotalTxt))
-                l_likesTotal = -1
-
-        if l_likesTotal is not None:
-            l_likesValues['total'] =  l_likesTotal
+        for l_likeElement in l_tree.xpath('//a[@class="_2x4v"]/span[@class="_4arz"]'):
+            l_likeTxt = l_likeElement.text_content()
+            l_likeCount = self.value_from_text(l_likeTxt)
+            if l_likeCount == -1:
+                self.m_logger.warning('Found likes total but could not convert to num: {0}'.format(l_likeTxt))
+            else:
+                if 'total' in l_likesValues.keys():
+                    l_likesValues['total'] += l_likeCount
+                else:
+                    l_likesValues['total'] = l_likeCount
 
         for l_likeElement in l_tree.xpath('//span[@class="_3t54"]/a[@class="_3emk"]'):
             l_likeTxt = l_likeElement.get('aria-label')
@@ -955,17 +1006,58 @@ class BrowserDriver:
             if l_found:
                 l_likeCountTxt = l_found.group(1)
                 l_likeType = l_found.group(2)
-                try:
-                    l_likeCount = int(l_likeCountTxt)
-                except ValueError:
-                    self.m_logger.warning('Found likes value but not int value: {0}'.format(l_likeCountTxt))
-                    l_likeCount = -1
+                l_likeCount = self.value_from_text(l_likeCountTxt)
+                if l_likeCount == -1:
+                    self.m_logger.warning('Found likes value but could not convert to num: {0}'.format(
+                        l_likeCountTxt))
+                else:
+                    if l_likeType in l_likesValues.keys():
+                        l_likesValues[l_likeType] += l_likeCount
+                    else:
+                        l_likesValues[l_likeType] = l_likeCount
+            else:
+                self.m_logger.warning('Unrecognized like pattern: {0}'.format(l_likeTxt))
 
-                l_likesValues[l_likeType] = l_likeCount
+        # DATA: (11) comments
+        l_comments = []
+        for l_commentBlock in l_tree.xpath('//div[contains(@class, "UFICommentContentBlock")]'):
+            l_dateTxt = BrowserDriver.get_unique_attr(
+                l_commentBlock, './/abbr[contains(@class, "livetimestamp")]', 'title')
+            l_text = BrowserDriver.get_unique(l_commentBlock, './/span[@class="UFICommentBody"]')
+
+            l_authList = []
+            for l_authorTag in l_commentBlock.xpath('.//a[contains(@class, "UFICommentActorName")]'):
+                l_name = l_authorTag.text_content()
+                l_userId = l_authorTag.get('href')
+                l_userId = re.sub('https://www.facebook.com/', '', l_userId)
+                l_userId = re.sub('\?.*$', '', l_userId).strip()
+                l_authList.append({'name': l_name, 'user_id': l_userId})
+
+            l_comments.append({
+                'date': self.date_from_text(l_dateTxt),
+                'text': l_text,
+                'authors': l_authList})
+
+        l_commentCount = len(l_comments)
+        for l_additionalTag in l_tree.xpath('//a[contains(@class, "UFIPagerLink")]'):
+            l_txt = l_additionalTag.text_content()
+            l_txt = re.sub('^View\s', '', l_txt)
+            l_txt = re.sub('\smore (comments|comment)$', '', l_txt)
+
+            l_additional = self.value_from_text(l_txt)
+            if l_additional > 0:
+                l_commentCount += l_additional
+
+        # DATA: (12) shares
+        l_shares = 0
+        for l_shareTag in l_tree.xpath('//a[contains(@class, "UFIShareLink")]'):
+            l_txt = l_shareTag.text_content()
+            l_txt = re.sub('\s+(shares|share)$', '', l_txt)
+            l_shares = self.value_from_text(l_txt)
 
         l_retStory = dict()
         l_retStory['id'] = l_id
-        l_retStory['date'] = l_date
+        l_retStory['date'] = l_datePost
         l_retStory['with'] = l_hasWith
         l_retStory['sponsored'] = l_sponsored
         l_retStory['type'] = l_type
@@ -978,6 +1070,9 @@ class BrowserDriver:
         l_retStory['images'] = l_imageList
         l_retStory['html'] = l_html
         l_retStory['likes'] = l_likesValues
+        l_retStory['comments'] = l_comments
+        l_retStory['comments_count'] = l_commentCount
+        l_retStory['shares'] = l_shares
 
         if EcAppParam.gcm_verboseModeOn:
             print('l_fromHeader   : ' + l_fromHeader)
@@ -986,12 +1081,16 @@ class BrowserDriver:
             print('Type           : ' + l_type)
             print('Shared objects : ' + repr(l_sharedList))
             print('Has with       : ' + repr(l_hasWith))
-            print('Date           : ' + repr(l_date))
+            print('Date           : ' + repr(l_datePost))
             print('Dates quoted   : ' + repr(l_dateQuoted))
             print('From           : ' + repr(l_from))
             print('From (dict)    : ' + repr(l_fromDict))
             print('Text           : ' + l_postText)
             print('Quoted Text    : ' + l_quotedText)
+            print('Likes          : {0}'.format(repr(l_likesValues)))
+            print('shares         : {0}'.format(l_shares))
+            print('Comments       : {0}'.format(repr(l_comments)))
+            print('Comments count : {0}'.format(l_commentCount))
             print('Size           : {0}'.format(l_size))
             print('Location       : {0}'.format(l_location))
             print('l_curY         : {0}'.format(p_curY))
@@ -1058,12 +1157,8 @@ if __name__ == "__main__":
     l_vpn = None
 
     l_driver = BrowserDriver(l_phantomId, l_phantomPwd, l_vpn)
-    l_driver.go_random()
-    #l_driver.get_fb_profile()
-    l_driver.log_out()
-
-    l_driver.login_as_scrape(l_phantomId, l_phantomPwd, l_vpn)
-    l_driver.go_random()
+    #l_driver.go_random()
+    l_driver.go_to_id(None, 'steve.stanzione')
     l_driver.get_fb_profile()
     l_driver.log_out()
 
