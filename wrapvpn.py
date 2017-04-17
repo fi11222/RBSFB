@@ -135,28 +135,36 @@ class OpenvpnWrapper:
         # wait for openvpn to establish connection
         while True:
             l_elapsed = time.perf_counter() - t0
+            print('Elapsed: {0:.1f}'.format(l_elapsed))
 
-            if l_elapsed > 60:
-                raise OpenVpnFailure('Timeout exceeded')
+            # cancels process if openvpn closes unexpectedly or takes more than 60 seconds to connect
+            if self.m_process.poll() is not None or l_elapsed > 60.0:
 
-            # cancels process if openvpn closes unexpectedly or takes more than 30 seconds to connect
-            if self.m_process.poll() is not None or time.perf_counter() - t0 > 30.0:
-                l_out = self.m_process.stdout.readline().strip()
-                l_err = self.m_process.stderr.readline().strip()
+                # kills all openvpn processes if still running
+                if self.m_process.poll() is None:
+                    l_result = run(['sudo', 'killall', '-r', '-9', '.*openvpn'], stdout=PIPE, stderr=PIPE)
+                    self.m_logger.info('Killing vpn processes : ' + repr(l_result))
+
+                l_out, l_err = self.m_process.communicate()
+
+                l_out = l_out.decode().strip()
+                l_err = l_err.decode().strip()
+                #l_out = self.m_process.stdout.readline().strip()
+                #l_err = self.m_process.stderr.readline().strip()
                 self.m_logger.warning('+++ ' + l_out)
                 self.m_logger.warning('--- ' + l_err)
 
-                # kills all openvpn processes if still running
-                if self.m_process.poll() is not None:
-                    run(['sudo', 'killall', '-9', 'openvpn'], stdout=PIPE, stderr=PIPE)
-
-                raise OpenVpnFailure('Process terminated unexpectedly')
+                if l_elapsed > 60:
+                    raise OpenVpnFailure('Timeout exceeded')
+                else:
+                    raise OpenVpnFailure('Process terminated unexpectedly')
 
             # read line without blocking
             try:
+                #print('a')
                 l_out = l_outputQueue.get_nowait().strip()  # or q.get(timeout=.1)
             except Empty:
-                #print('Elapsed: {0:.1f}'.format(l_elapsed))
+                #print('b')
                 time.sleep(.1)
             else:  # got line
 

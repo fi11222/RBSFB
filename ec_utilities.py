@@ -125,6 +125,8 @@ class EcLogger(logging.Logger):
         # Custom Formatter for the CSV file --> eliminates multiple spaces (and \r\n)
         class EcCsvFormatter(logging.Formatter):
             def format(self, p_record):
+                #print('EcCsvFormatter BEGIN')
+
                 l_record = logging.LogRecord(
                     p_record.name,
                     p_record.levelno,
@@ -139,46 +141,57 @@ class EcLogger(logging.Logger):
                     p_record.stack_info,
                 )
 
-                # log message in TB_EC_DEBUG
-                l_conn1 = EcLogger.cm_pool.getconn()
-                l_cursor1 = l_conn1.cursor()
-                try:
-                    l_cursor1.execute("""
-                            insert into "TB_EC_DEBUG"(
-                                "ST_NAME",
-                                "ST_LEVEL",
-                                "ST_MODULE",
-                                "ST_FILENAME",
-                                "ST_FUNCTION",
-                                "N_LINE",
-                                "TX_MSG"
-                            )
-                            values(%s, %s, %s, %s, %s, %s, %s);
-                        """, (
-                        p_record.name,
-                        p_record.levelname,
-                        p_record.module,
-                        p_record.pathname,
-                        p_record.funcName,
-                        p_record.lineno,
-                        re.sub('\s+', ' ', p_record.msg)
-                    ))
-                    l_conn1.commit()
-                except psycopg2.Error as e1:
-                    EcMailer.send_mail(
-                        'TB_EC_DEBUG insert failure: {0}'.format(repr(e1)),
-                        'Sent from EcCsvFormatter\n' + EcConnectionPool.get_psycopg2_error_block(e1)
-                    )
-                    raise
+                if LocalParam.gcm_debugToDB:
+                    # log message in TB_EC_DEBUG
+                    #print('EcCsvFormatter a')
+                    l_conn1 = EcLogger.cm_pool.getconn()
+                    #print('EcCsvFormatter b')
+                    l_cursor1 = l_conn1.cursor()
+                    #print('EcCsvFormatter c')
+                    try:
+                        l_cursor1.execute("""
+                                insert into "TB_EC_DEBUG"(
+                                    "ST_NAME",
+                                    "ST_LEVEL",
+                                    "ST_MODULE",
+                                    "ST_FILENAME",
+                                    "ST_FUNCTION",
+                                    "N_LINE",
+                                    "TX_MSG"
+                                )
+                                values(%s, %s, %s, %s, %s, %s, %s);
+                            """, (
+                            p_record.name,
+                            p_record.levelname,
+                            p_record.module,
+                            p_record.pathname,
+                            p_record.funcName,
+                            p_record.lineno,
+                            re.sub('\s+', ' ', p_record.msg)
+                        ))
+                        #print('EcCsvFormatter c1: ' + l_conn1.debug_data)
+                        l_conn1.commit()
+                    except psycopg2.Error as e1:
+                        EcMailer.send_mail(
+                            'TB_EC_DEBUG insert failure: {0}'.format(repr(e1)),
+                            'Sent from EcCsvFormatter\n' + EcConnectionPool.get_psycopg2_error_block(e1)
+                        )
+                        raise
 
-                l_cursor1.close()
-                EcLogger.cm_pool.putconn(l_conn1)
+                    #print('EcCsvFormatter d')
+                    l_cursor1.close()
+                    #print('EcCsvFormatter e')
+                    EcLogger.cm_pool.putconn(l_conn1)
+                    #print('EcCsvFormatter f')
 
-                return re.sub('\s+', ' ', super().format(l_record))
+                l_ret = re.sub('\s+', ' ', super().format(l_record))
+                #print('EcCsvFormatter END')
+                return l_ret
 
         # Custom Formatter for the console --> send mail if warning or worse
         class EcConsoleFormatter(logging.Formatter):
             def format(self, p_record):
+                #print('EcConsoleFormatter BEGIN')
                 l_formatted = super().format(p_record)
 
                 # this test is located here and not in the CSV formatter so that it does not get to be performed
@@ -229,6 +242,7 @@ class EcLogger(logging.Logger):
                     l_cursor1.close()
                     EcLogger.cm_pool.putconn(l_conn1)
 
+                #print('EcConsoleFormatter END')
                 return l_formatted
 
         # Install formaters

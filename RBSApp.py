@@ -29,10 +29,10 @@ class RbsBackgroundTask(threading.Thread):
 
     def run(self):
         l_phantomList = [
-            ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn')
+            ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None)
+            , ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn')
             , ('nicolas.reimen@gmail.com', 'murugan!', None)
             , ('kabir.abdulhami@gmail.com', '12Alhamdulillah', 'India.Maharashtra.Mumbai.TCP.ovpn')
-            , ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None)
         ]
 
         l_phantomIndex = 0
@@ -41,7 +41,7 @@ class RbsBackgroundTask(threading.Thread):
             l_sleep = random.randint(20, 40)
             self.m_logger.info('Waiting for {0} seconds'.format(l_sleep))
 
-            if self.m_browser is not None:
+            if self.m_browser is not None and self.m_browser.isLoggedIn():
                 self.m_browser.mouse_obfuscate(l_sleep)
             else:
                 time.sleep(l_sleep)
@@ -472,6 +472,9 @@ class StartApp:
                 type(e).__name__, repr(e)
             ))
             sys.exit(0)
+
+        EcLogger.root_logger().info('locale (LC_CTYPE) : {0}'.format(locale.getlocale(locale.LC_CTYPE)))
+        EcLogger.root_logger().info('locale (LC_TIME)  : {0}'.format(locale.getlocale(locale.LC_TIME)))
 
         l_locale, l_encoding = locale.getlocale(locale.LC_TIME)
         if l_locale is None:

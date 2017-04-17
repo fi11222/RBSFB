@@ -36,6 +36,7 @@ class EcAppParam:
     gcm_max_story_count = LocalParam.gcm_max_story_count
     gcm_getImages = LocalParam.gcm_getImages
     gcm_startGathering = LocalParam.gcm_startGathering
+    gcm_debugToDB = LocalParam.gcm_debugToDB
 
     #: Static files root (copied from :any:`LocalParam`)
     gcm_staticRoot = LocalParam.gcm_appRoot
