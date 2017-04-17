@@ -29,10 +29,10 @@ class RbsBackgroundTask(threading.Thread):
 
     def run(self):
         l_phantomList = [
-            ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None)
-            , ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn')
-            , ('nicolas.reimen@gmail.com', 'murugan!', None)
-            , ('kabir.abdulhami@gmail.com', '12Alhamdulillah', 'India.Maharashtra.Mumbai.TCP.ovpn')
+            ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn'),
+            ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None),
+            ('nicolas.reimen@gmail.com', 'murugan!', None),
+            ('kabir.abdulhami@gmail.com', '12Alhamdulillah', 'India.Maharashtra.Mumbai.TCP.ovpn')
         ]
 
         l_phantomIndex = 0

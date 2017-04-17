@@ -135,7 +135,7 @@ class OpenvpnWrapper:
         # wait for openvpn to establish connection
         while True:
             l_elapsed = time.perf_counter() - t0
-            print('Elapsed: {0:.1f}'.format(l_elapsed))
+            print('Elapsed: {0:.1f}'.format(l_elapsed), end='\r')
 
             # cancels process if openvpn closes unexpectedly or takes more than 60 seconds to connect
             if self.m_process.poll() is not None or l_elapsed > 60.0:

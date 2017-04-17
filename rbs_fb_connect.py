@@ -183,31 +183,41 @@ class BrowserDriver:
             self.m_vpn_handle = None
 
         # load logging page
+        self.m_logger.info('Loading Facebook log-in page')
         self.m_driver.get('http://www.facebook.com')
 
         try:
             # wait for the presence of the user ID (or e-mail) text input field.
-            l_userInput = WebDriverWait(self.m_driver, 15).until(
+            l_userInput = WebDriverWait(self.m_driver, 60).until(
                 EC.presence_of_element_located((By.XPATH, '//td/input[@id="email"]')))
 
             # sends the user ID string to it
             l_userInput.send_keys(p_user)
+            self.m_logger.info('User ID entered: {0}'.format(p_user))
 
             # wait for the presence of the user password (or e-mail) text input field.
-            l_pwdInput = WebDriverWait(self.m_driver, 15).until(
+            l_pwdInput = WebDriverWait(self.m_driver, 60).until(
                 EC.presence_of_element_located((By.XPATH, '//td/input[@id="pass"]')))
 
             # sends the password string to it
             l_pwdInput.send_keys(p_passwd)
+            self.m_logger.info('Password entered: {0}'.format(p_passwd))
 
             # finds the log-in button and clicks it
             self.m_driver.find_element_by_xpath('//label[@id="loginbutton"]/input').click()
+            self.m_logger.info('Login button clicked')
 
             # wait for the presence of the `mainContainer` element, indicating post login page load
-            WebDriverWait(self.m_driver, 15).until(
+            WebDriverWait(self.m_driver, 60).until(
                 EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
+            self.m_logger.info('User page display started')
         except EX.TimeoutException:
             self.m_logger.critical('Did not find user ID/pwd input or post-login mainContainer')
+
+            if self.m_vpn_handle is not None:
+                self.m_vpn_handle.close()
+                self.m_vpn_handle = None
+
             raise
 
         # creation date/time (for staleness)
