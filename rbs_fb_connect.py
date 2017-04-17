@@ -23,7 +23,7 @@ import base64
 import copy
 
 from ec_utilities import *
-import openvpn
+import wrapvpn
 
 __author__ = 'Pavan Mahalingam'
 
@@ -68,7 +68,7 @@ class BrowserDriver:
         """
         return '¤'.join([str(l_span.text_content()) for l_span in p_frag.xpath(p_xpath)]).strip()
 
-    def __init__(self, p_user, p_pwd, p_vpn):
+    def __init__(self):
         """
         Instantiates Selenium WebDriver and Chrome instance. Chrome is headless or not
         depending on the value of :any:`EcAppParam.gcm_headless` (boolean)
@@ -76,8 +76,10 @@ class BrowserDriver:
         # instantiates class logger
         self.m_logger = logging.getLogger('BrowserDriver')
 
+        # create members so that they exist in __init__. In fact their real instantiation is in login_as_scrape()
         self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
         self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(days=3650)
+        self.m_vpn_handle = None
 
         if EcAppParam.gcm_headless:
             # if headless mode requested, starts the pyvirtualdisplay xvfb driver
@@ -134,9 +136,8 @@ class BrowserDriver:
             self.m_logger.critical(l_message)
             raise BrowserDriverException(l_message)
 
-        self.login_as_scrape(p_user, p_pwd, p_vpn)
-
         self.m_dnl_ses_id = None
+        self.m_loggedIn = False
 
     def isStale(self):
         """
@@ -175,16 +176,9 @@ class BrowserDriver:
         :return: nothing (if there were problems --> raise errors)
         """
 
-        # creation date/time (for staleness)
-        self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
-        l_lifespan = EcAppParam.gcm_bdLifeAverage + \
-                     (EcAppParam.gcm_bdLifeDiameter/2.0 - random.random()*EcAppParam.gcm_bdLifeDiameter)
-        self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(hours=l_lifespan)
-        self.m_logger.info('lifespan: {0} hours'.format(l_lifespan))
-
         # open vpn
         if p_vpn is not None and len(p_vpn) > 0:
-            self.m_vpn_handle = openvpn.OpenvpnWrapper(p_vpn)
+            self.m_vpn_handle = wrapvpn.OpenvpnWrapper(p_vpn)
         else:
             self.m_vpn_handle = None
 
@@ -216,6 +210,15 @@ class BrowserDriver:
             self.m_logger.critical('Did not find user ID/pwd input or post-login mainContainer')
             raise
 
+        # creation date/time (for staleness)
+        self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
+        l_lifespan = EcAppParam.gcm_bdLifeAverage + \
+                     (EcAppParam.gcm_bdLifeDiameter / 2.0 - random.random() * EcAppParam.gcm_bdLifeDiameter)
+        self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(hours=l_lifespan)
+        self.m_logger.info('lifespan: {0} hours'.format(l_lifespan))
+
+        self.m_loggedIn = True
+
     def log_out(self):
         try:
             # wait for the presence of the settings arrow down button
@@ -244,6 +247,11 @@ class BrowserDriver:
         if self.m_vpn_handle is not None:
             self.m_vpn_handle.close()
             self.m_vpn_handle = None
+
+        self.m_loggedIn = False
+
+    def isLoggedIn(self):
+        return self.m_loggedIn
 
     def dump_html(self):
         l_html = self.m_driver.find_element_by_xpath('//html').get_attribute('outerHTML')
@@ -1156,7 +1164,8 @@ if __name__ == "__main__":
     # l_vpn = 'India.Maharashtra.Mumbai.TCP.ovpn'
     l_vpn = None
 
-    l_driver = BrowserDriver(l_phantomId, l_phantomPwd, l_vpn)
+    l_driver = BrowserDriver()
+    l_driver.login_as_scrape(l_phantomId, l_phantomPwd, l_vpn)
     #l_driver.go_random()
     l_driver.go_to_id(None, 'steve.stanzione')
     l_driver.get_fb_profile()

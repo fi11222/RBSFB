@@ -6,7 +6,7 @@ from ec_request_handler import *
 
 from rbs_fb_connect import *
 
-from openvpn import OpenvpnWrapper
+from wrapvpn import OpenvpnWrapper
 
 import random
 import sys
@@ -28,9 +28,14 @@ class RbsBackgroundTask(threading.Thread):
         self.start()
 
     def run(self):
-        l_phantomId = 'nicolas.reimen@gmail.com'
-        l_phantomPwd = 'murugan!'
-        l_vpn = None
+        l_phantomList = [
+            ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn')
+            , ('nicolas.reimen@gmail.com', 'murugan!', None)
+            , ('kabir.abdulhami@gmail.com', '12Alhamdulillah', 'India.Maharashtra.Mumbai.TCP.ovpn')
+            , ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None)
+        ]
+
+        l_phantomIndex = 0
 
         while True:
             l_sleep = random.randint(20, 40)
@@ -41,23 +46,47 @@ class RbsBackgroundTask(threading.Thread):
             else:
                 time.sleep(l_sleep)
 
-            self.m_logger.info('top >>>>>>>>>>>>>>>>>>>>>>>')
+            self.m_logger.info('>>>>>>>>>>>>>>> top >>>>>>>>>>>>>>>>>>>>>>>')
 
-            if self.m_browser is not None and self.m_browser.isStale():
-                self.m_browser.log_out()
-                self.m_logger.info('*** User Logged out')
-                time.sleep(random.randint(10, 20))
-                self.m_browser.login_as_scrape(l_phantomId, l_phantomPwd, l_vpn)
-                self.m_logger.info('*** User Logged back in')
-            elif self.m_browser is None:
+            if self.m_browser is None:
+                # initial state: no browser driver yet
+                self.m_logger.info('>> create browser')
+
                 try:
-                    self.m_browser = BrowserDriver(l_phantomId, l_phantomPwd, l_vpn)
+                    self.m_browser = BrowserDriver()
                     self.m_logger.info('*** Browser Driver set-up complete')
                 except Exception as e:
-                    self.m_logger.warning('Serious exception - aborting browser driver: ' + repr(e))
+                    self.m_logger.warning('Unable to instantiate browser: ' + repr(e))
                     self.m_browser = None
-                    raise
+            elif self.m_browser is not None and not self.m_browser.isLoggedIn():
+                # not logged in state (either at start or after a
+                self.m_logger.info('>> log in')
+
+                l_phantomId, l_phantomPwd, l_vpn = l_phantomList[l_phantomIndex]
+                l_phantomIndex += 1
+                if l_phantomIndex >= len(l_phantomList):
+                    l_phantomIndex = 0
+
+                self.m_logger.info('%%%%%%%%%% USER %%%%%%%%%%%%%%%')
+                self.m_logger.info('User: {0}'.format(l_phantomId))
+                self.m_logger.info('Pwd : {0}'.format(l_phantomPwd))
+                self.m_logger.info('Vpn : {0}'.format(l_vpn))
+
+                try:
+                    self.m_browser.login_as_scrape(l_phantomId, l_phantomPwd, l_vpn)
+                    self.m_logger.info('*** User Logged in')
+                except Exception as e:
+                    self.m_logger.warning('Unable to log in: ' + repr(e))
+            elif self.m_browser is not None and self.m_browser.isLoggedIn() and self.m_browser.isStale():
+                # stale browser situation
+                self.m_logger.info('>> stale browser')
+
+                # log out current user
+                self.m_browser.log_out()
+                self.m_logger.info('*** User Logged out')
             else:
+                # normal situation: browser is ok and a new story can be fetched
+                self.m_logger.info('>> fetch story')
                 try:
                     t0 = time.perf_counter()
                     self.m_browser.go_random()
