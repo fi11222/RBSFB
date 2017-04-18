@@ -153,6 +153,7 @@ class EcAppCore(threading.Thread):
             try:
                 l_cursor.execute("""
                     insert into "TB_EC_MSG"(
+                        "ST_TYPE",
                         "ST_NAME",
                         "ST_LEVEL",
                         "ST_MODULE",
@@ -161,8 +162,9 @@ class EcAppCore(threading.Thread):
                         "N_LINE",
                         "TX_MSG"
                     )
-                    values(%s, %s, %s, %s, %s, %s, %s);
+                    values(%s, %s, %s, %s, %s, %s, %s, %s);
                 """, (
+                    'HLTH',
                     'xxx',
                     'XXX',
                     'ec_app_core',

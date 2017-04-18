@@ -6,7 +6,7 @@ from ec_request_handler import *
 
 from rbs_fb_connect import *
 
-from wrapvpn import OpenvpnWrapper
+from wrapvpn import OpenvpnWrapper, OpenVpnFailure
 
 import random
 import sys
@@ -17,34 +17,132 @@ __author__ = 'Pavan Mahalingam'
 
 
 class RbsBackgroundTask(threading.Thread):
-    def __init__(self):
+    def __init__(self, p_pool):
         super().__init__(daemon=True)
 
         self.m_logger = logging.getLogger('RbsBackgroundTask')
 
         self.m_browser = None
 
+        self.m_pool = p_pool
+
         # starts the background thread
         self.start()
+
+    def internet_check(self):
+        try:
+            l_ip = OpenvpnWrapper.getOwnIp()
+
+            # if this point is reached --> the internet connection is probably ok
+            self.m_logger.info('Own IP: {0}'.format(l_ip))
+            l_internetOk = True
+        except OpenVpnFailure as e:
+            self.m_logger.warning('Own IP failure: ' + repr(e))
+            l_internetOk = False
+
+        return l_internetOk
+
+    def log_phantom_connection(self, p_phantom, p_vpn, p_password, p_logIn=True, p_success=True):
+        # log message in TB_EC_MSG
+        l_conn = self.m_pool.getconn('log_phantom_connection()')
+        l_cursor = l_conn.cursor()
+        try:
+            l_cursor.execute("""
+                    insert into "TB_EC_MSG"(
+                        "ST_TYPE",
+                        "ST_NAME",
+                        "ST_LEVEL",
+                        "ST_MODULE",
+                        "ST_FILENAME",
+                        "ST_FUNCTION",
+                        "N_LINE",
+                        "TX_MSG"
+                    )
+                    values(%s, %s, %s, %s, %s, %s, %s, %s);
+                """, (
+                    'ULIO',
+                    'xxx',
+                    'XXX',
+                    'RBSApp',
+                    './RBSApp.py',
+                    'log_phantom_connection',
+                    0,
+                    'Phantom: {0} [vpn: {1}] {2} {3}'.format(
+                        p_phantom, p_vpn,
+                        'Login' if p_logIn else 'Logout',
+                        'Successful' if p_success else 'Failed'
+                    )
+                )
+            )
+            l_conn.commit()
+        except Exception as e:
+            self.m_logger.warning('TB_EC_MSG insert failure: {0}'.format(repr(e)))
+            raise
+
+        l_cursor.close()
+        l_cursor = l_conn.cursor()
+        try:
+            l_cursor.execute("""
+                    insert into "TB_PHANTOM_LOGIN"(
+                        "ST_PHANTOM_ID",
+                        "ST_VPN",
+                        "ST_PASSWORD",
+                        "ST_OPE",
+                        "K_SUCCESS",
+                        "DT_LOG"
+                    )
+                    values(%s, %s, %s, %s, %s, %s);
+                """, (
+                    p_phantom,
+                    p_vpn,
+                    p_password,
+                    'Login' if p_logIn else 'Logout',
+                    p_success,
+                    datetime.datetime.now(tz=pytz.utc)
+                )
+            )
+            l_conn.commit()
+        except Exception as e:
+            self.m_logger.warning('TB_PHANTOM_LOGIN insert failure: {0}'.format(repr(e)))
+            raise
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
 
     def run(self):
         l_phantomList = [
             ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn'),
             ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None),
+            ('kabir.abdulhami@gmail.com', '12Alhamdulillah', 'India.Maharashtra.Mumbai.TCP.ovpn'),
             ('nicolas.reimen@gmail.com', 'murugan!', None),
-            ('kabir.abdulhami@gmail.com', '12Alhamdulillah', 'India.Maharashtra.Mumbai.TCP.ovpn')
         ]
 
         l_phantomIndex = 0
 
+        l_internetOk = True
+        l_phantomId = ''
         while True:
-            l_sleep = random.randint(20, 40)
-            self.m_logger.info('Waiting for {0} seconds'.format(l_sleep))
+            l_sleep = random.randint(10, 50)
+            self.m_logger.info('[{0}] Waiting for {1} seconds'.format(l_phantomId, l_sleep))
 
-            if self.m_browser is not None and self.m_browser.isLoggedIn():
+            # Internet connection test
+            l_internetOkPrevious = l_internetOk
+            l_internetOk = self.internet_check()
+
+            if self.m_browser is not None and self.m_browser.isLoggedIn() and l_internetOk:
                 self.m_browser.mouse_obfuscate(l_sleep)
             else:
                 time.sleep(l_sleep)
+
+            l_internetOk = self.internet_check()
+
+            if not l_internetOk:
+                self.m_logger.warning('Internet connection off')
+                continue
+
+            if l_internetOk and not l_internetOkPrevious:
+                self.m_logger.warning('Internet connection reestablished - refreshing page')
+                self.m_browser.refresh_page()
 
             self.m_logger.info('>>>>>>>>>>>>>>> top >>>>>>>>>>>>>>>>>>>>>>>')
 
@@ -58,6 +156,7 @@ class RbsBackgroundTask(threading.Thread):
                 except Exception as e:
                     self.m_logger.warning('Unable to instantiate browser: ' + repr(e))
                     self.m_browser = None
+                    raise
             elif self.m_browser is not None and not self.m_browser.isLoggedIn():
                 # not logged in state (either at start or after a
                 self.m_logger.info('>> log in')
@@ -75,18 +174,29 @@ class RbsBackgroundTask(threading.Thread):
                 try:
                     self.m_browser.login_as_scrape(l_phantomId, l_phantomPwd, l_vpn)
                     self.m_logger.info('*** User Logged in')
+                    self.log_phantom_connection(l_phantomId, l_vpn, l_phantomPwd, p_logIn=True, p_success=True)
                 except Exception as e:
                     self.m_logger.warning('Unable to log in: ' + repr(e))
+                    self.log_phantom_connection(l_phantomId, l_vpn, l_phantomPwd, p_logIn=True, p_success=False)
             elif self.m_browser is not None and self.m_browser.isLoggedIn() and self.m_browser.isStale():
                 # stale browser situation
                 self.m_logger.info('>> stale browser')
 
                 # log out current user
-                self.m_browser.log_out()
-                self.m_logger.info('*** User Logged out')
+                try:
+                    self.m_browser.log_out()
+                    self.m_logger.info('*** User Logged out')
+                    self.log_phantom_connection(l_phantomId, '', '', p_logIn=False, p_success=True)
+                    l_phantomId = ''
+                except Exception as e:
+                    self.m_logger.warning('Unable to log out: ' + repr(e))
+                    self.log_phantom_connection(l_phantomId, '', '', p_logIn=False, p_success=False)
+
+                    if self.internet_check():
+                        sys.exit(0)
             else:
                 # normal situation: browser is ok and a new story can be fetched
-                self.m_logger.info('>> fetch story')
+                self.m_logger.info('>> fetch user page')
                 try:
                     t0 = time.perf_counter()
                     self.m_browser.go_random()
@@ -96,9 +206,11 @@ class RbsBackgroundTask(threading.Thread):
                 except EX.TimeoutException as e:
                     self.m_logger.warning('Non fatal TimeoutException. Will try again.' + repr(e))
                 except Exception as e:
-                    self.m_logger.warning('Serious exception - killing browser driver: ' + repr(e))
-                    self.m_browser.close()
-                    raise
+                    if self.internet_check():
+                        self.m_logger.warning('Serious exception - Raising: ' + repr(e))
+                        raise
+                    else:
+                        self.m_logger.warning('Serious exception - but internet failure: ' + repr(e))
 
 
 class RbsApp(EcAppCore):
@@ -108,7 +220,7 @@ class RbsApp(EcAppCore):
         self.m_logger = logging.getLogger('RbsApp')
 
         if EcAppParam.gcm_startGathering:
-            self.m_background = RbsBackgroundTask()
+            self.m_background = RbsBackgroundTask(self.m_connectionPool)
         else:
             self.m_background = None
 

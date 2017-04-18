@@ -80,6 +80,7 @@ class BrowserDriver:
         self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
         self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(days=3650)
         self.m_vpn_handle = None
+        self.m_phantomID = ''
 
         if EcAppParam.gcm_headless:
             # if headless mode requested, starts the pyvirtualdisplay xvfb driver
@@ -228,6 +229,7 @@ class BrowserDriver:
         self.m_logger.info('lifespan: {0} hours'.format(l_lifespan))
 
         self.m_loggedIn = True
+        self.m_phantomID = p_user
 
     def log_out(self):
         try:
@@ -259,6 +261,11 @@ class BrowserDriver:
             self.m_vpn_handle = None
 
         self.m_loggedIn = False
+        self.m_phantomID = ''
+
+    def refresh_page(self):
+        self.m_driver.refresh()
+        time.sleep(30)
 
     def isLoggedIn(self):
         return self.m_loggedIn
@@ -501,7 +508,7 @@ class BrowserDriver:
                                 l_retStory1 = copy.deepcopy(l_retStory)
                                 l_retStory1['images'] = [i[:100] + '...' for i in l_retStory1['images']]
                                 l_retStory1['html'] = l_retStory1['html'][:100] + '...'
-                                self.m_logger.info('repr: {0}'.format(repr(l_retStory1)))
+                                self.m_logger.debug('repr: {0}'.format(repr(l_retStory1)))
 
                             if l_retStory['date'] is not None:
                                 l_retStory['date'] = l_retStory['date'].strftime('%Y%m%d %H:%M')
@@ -567,7 +574,7 @@ class BrowserDriver:
                         l_storyCount += 1
                         if p_obfuscate:
                             l_wait = random.randint(5, 30)
-                            self.m_logger.info('Wating for {0} seconds'.format(l_wait))
+                            self.m_logger.info('[{0}] Wating for {1} seconds'.format(self.m_phantomID, l_wait))
                             self.mouse_obfuscate(l_wait)
                     else:
                         self.m_logger.debug('--- Story already analyzed: ' + l_id)

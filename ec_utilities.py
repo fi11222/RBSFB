@@ -213,6 +213,7 @@ class EcLogger(logging.Logger):
                     try:
                         l_cursor1.execute("""
                             insert into "TB_EC_MSG"(
+                                "ST_TYPE",
                                 "ST_NAME",
                                 "ST_LEVEL",
                                 "ST_MODULE",
@@ -221,8 +222,9 @@ class EcLogger(logging.Logger):
                                 "N_LINE",
                                 "TX_MSG"
                             )
-                            values(%s, %s, %s, %s, %s, %s, %s);
+                            values(%s, %s, %s, %s, %s, %s, %s, %s);
                         """, (
+                            'LOG',
                             p_record.name,
                             p_record.levelname,
                             p_record.module,
