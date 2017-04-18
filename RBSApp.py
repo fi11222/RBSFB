@@ -122,7 +122,7 @@ class RbsBackgroundTask(threading.Thread):
         l_internetOk = True
         l_phantomId = ''
         while True:
-            l_sleep = random.randint(10, 50)
+            l_sleep = random.randint(EcAppParam.gcm_bkgMinDelay, EcAppParam.gcm_bkgMaxDelay)
             self.m_logger.info('[{0}] Waiting for {1} seconds'.format(l_phantomId, l_sleep))
 
             # Internet connection test
@@ -196,7 +196,7 @@ class RbsBackgroundTask(threading.Thread):
                         sys.exit(0)
             else:
                 # normal situation: browser is ok and a new story can be fetched
-                self.m_logger.info('>> fetch user page')
+                self.m_logger.info('>> fetch one user feed')
                 try:
                     t0 = time.perf_counter()
                     self.m_browser.go_random()

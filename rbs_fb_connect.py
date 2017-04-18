@@ -573,7 +573,8 @@ class BrowserDriver:
 
                         l_storyCount += 1
                         if p_obfuscate:
-                            l_wait = random.randint(5, 30)
+                            l_wait = random.randint(
+                                EcAppParam.gcm_storiesMinDelay, EcAppParam.gcm_storiesMaxDelay)
                             self.m_logger.info('[{0}] Wating for {1} seconds'.format(self.m_phantomID, l_wait))
                             self.mouse_obfuscate(l_wait)
                     else:
@@ -678,7 +679,7 @@ class BrowserDriver:
         try:
             l_value = int(l_txt)
         except ValueError:
-            l_txt = re.sub('(k|K)$', '', l_txt).strip()
+            l_txt = re.sub('([kK])$', '', l_txt).strip()
             try:
                 l_value = float(l_txt) * 1000
             except ValueError as e:
