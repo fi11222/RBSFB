@@ -105,14 +105,6 @@ class EcAppParamFacebook(LocalParam):
     gcm_bdLifeAverage = 2
     #: +/- value (in hours) around average between which the browser driver life span is chosen at random
     gcm_bdLifeDiameter = .25
-    #: Min delay between main loop actions
-    gcm_bkgMinDelay = 30
-    #: Max delay between main loop actions
-    gcm_bkgMaxDelay = 90
-    #: Min delay between stories download
-    gcm_storiesMinDelay = 10
-    #: Max delay between stories download
-    gcm_storiesMaxDelay = 30
     #: Minimum size of images to be downloaded (in both directions)
     gcm_minImageSize = 100
     #: True --> Expand comments list for each story
