@@ -342,13 +342,15 @@ class BrowserDriver:
 
         return l_id
 
-    def go_to_id(self, p_id, p_userId, p_idInternal=None):
+    def go_to_id(self, p_id, p_userId, p_idInternal=None, p_name='<Unknown>', p_type='Page'):
         """
         Go to the specified user page. Both `p_id` and `p_userId` cannot be `None`.
 
         :param p_id: Can be either a numeric ID or `None`.
         :param p_userId: Can be either a string user ID or `None`.
         :param p_idInternal: Internal ID in `TB_USER`.
+        :param p_name: Name of the user (used only if the record is not found in `TB_USER` and must be created).
+        :param p_type: 'User' or 'Page' (used only if the record is not found in `TB_USER` and must be created).
         :return: Nothing.
         """
 
@@ -367,6 +369,7 @@ class BrowserDriver:
 
         l_id_internal = None
         if p_idInternal is None:
+            # find ID_INTERNAL in TB_USER
             l_cursor = l_connect1.cursor()
             l_query = """
                 select
@@ -383,6 +386,30 @@ class BrowserDriver:
             l_cursor.execute(l_query)
             for l_id_internal, in l_cursor:
                 break
+
+            # If still not found, create the record in TB_USER
+            if l_id_internal is None:
+                l_id = p_id if p_id is not None else '_-RBSFB-ID-_' + p_userId
+                l_now = datetime.datetime.now()
+                l_cursor = l_connect1.cursor()
+                l_cursor.execute("""
+                    insert into "TB_USER" ("ID", "ST_NAME", "DT_CRE", "DT_MSG", "ST_USER_ID", "ST_TYPE")
+                    values (%s, %s, %s, %s, %s, %s)
+                    ;""", (l_id, p_name, l_now, l_now, p_userId, p_type))
+                l_connect1.commit()
+
+                l_cursor = l_connect1.cursor()
+                l_query = """
+                    select
+                        "ID_INTERNAL"
+                    from
+                        "TB_USER"
+                    where
+                        "ID" = '{0}'
+                    ;""".format(l_id)
+                l_cursor.execute(l_query)
+                for l_id_internal, in l_cursor:
+                    break
         else:
             l_id_internal = p_idInternal
 
@@ -1052,11 +1079,38 @@ class BrowserDriver:
             l_expansionOccurred = True
             while l_expansionOccurred:
                 l_expansionOccurred = False
+                # list all "more comments" and "replies" links
                 for l_commentLink in p_story.find_elements_by_xpath(
                         './/a[@class="UFIPagerLink" or @class="UFICommentLink"]'):
+
+                    # do not activate the "Hide xxx replies" links
+                    if re.search('Hide.*Replies', l_commentLink.text):
+                        continue
+
+                    # click the link
                     l_commentLink.click()
+
+                    try:
+                        # wait for the little round progressbar to appear
+                        WebDriverWait(self.m_driver, 15).until(
+                            EC.presence_of_element_located(
+                                (By.XPATH, '//span[contains(@class, "mls") and @role="progressbar"]')
+                            )
+                        )
+                    except EX.TimeoutException:
+                        self.m_logger.warning('Comments progress bar did not appear on time')
+
+                    try:
+                        # wait for the little round progressbar to disappear
+                        WebDriverWait(self.m_driver, 15).until(
+                            EC.invisibility_of_element_located(
+                                (By.XPATH, '//span[contains(@class, "mls") and @role="progressbar"]')
+                            )
+                        )
+                    except EX.TimeoutException:
+                        self.m_logger.warning('Comments progress bar did not disappear on time')
+
                     l_expansionOccurred = True
-                time.sleep(.1)
 
         # Recording comments
         l_comments = []
