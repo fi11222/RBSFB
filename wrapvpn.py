@@ -219,8 +219,8 @@ if __name__ == "__main__":
 
             l_connect.close()
             break
-        except psycopg2.Error as e:
-            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', repr(e))
+        except psycopg2.Error as e0:
+            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', repr(e0))
             time.sleep(1)
             continue
 

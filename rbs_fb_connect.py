@@ -481,6 +481,8 @@ class BrowserDriver:
             self.m_logger.info(
                 '### main loop. l_storyCount={0} l_fruitlessTries={1}'.format(l_storyCount, l_fruitlessTries))
             for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "{0}")]'.format(l_storyPrefix)):
+                if l_storyCount > EcAppParam.gcm_max_story_count:
+                    break
                 # inner loop: scans all stories present on the page
                 try:
                     # get the stories id attribute
@@ -1045,6 +1047,18 @@ class BrowserDriver:
                 self.m_logger.warning('Unrecognized like pattern: {0}'.format(l_likeTxt))
 
         # DATA: (11) comments
+        # Expanding comments
+        if EcAppParam.gcm_expandComments:
+            l_expansionOccurred = True
+            while l_expansionOccurred:
+                l_expansionOccurred = False
+                for l_commentLink in p_story.find_elements_by_xpath(
+                        './/a[@class="UFIPagerLink" or @class="UFICommentLink"]'):
+                    l_commentLink.click()
+                    l_expansionOccurred = True
+                time.sleep(.1)
+
+        # Recording comments
         l_comments = []
         for l_commentBlock in l_tree.xpath('//div[contains(@class, "UFICommentContentBlock")]'):
             l_dateTxt = BrowserDriver.get_unique_attr(
@@ -1154,36 +1168,36 @@ if __name__ == "__main__":
         l_iter += 1
 
         try:
-            l_connect = psycopg2.connect(
+            l_connect0 = psycopg2.connect(
                 host=EcAppParam.gcm_dbServer,
                 database=EcAppParam.gcm_dbDatabase,
                 user=EcAppParam.gcm_dbUser,
                 password=EcAppParam.gcm_dbPassword
             )
 
-            l_connect.close()
+            l_connect0.close()
             break
-        except psycopg2.Error as e:
-            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', repr(e))
+        except psycopg2.Error as e0:
+            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', repr(e0))
             time.sleep(1)
             continue
 
     # logging system init
     try:
         EcLogger.log_init()
-    except Exception as e:
-        EcMailer.send_mail('Failed to initialize EcLogger', repr(e))
+    except Exception as e0:
+        EcMailer.send_mail('Failed to initialize EcLogger', repr(e0))
 
     # g_browser = 'Firefox'
     g_browser = 'Chrome'
 
-    l_phantomId = 'nicolas.reimen@gmail.com'
-    l_phantomPwd = 'murugan!'
+    l_phantomId0 = 'nicolas.reimen@gmail.com'
+    l_phantomPwd0 = 'murugan!'
     # l_vpn = 'India.Maharashtra.Mumbai.TCP.ovpn'
-    l_vpn = None
+    l_vpn0 = None
 
     l_driver = BrowserDriver()
-    l_driver.login_as_scrape(l_phantomId, l_phantomPwd, l_vpn)
+    l_driver.login_as_scrape(l_phantomId0, l_phantomPwd0, l_vpn0)
     #l_driver.go_random()
     l_driver.go_to_id(None, 'steve.stanzione')
     l_driver.get_fb_profile()

@@ -17,32 +17,58 @@ __author__ = 'Pavan Mahalingam'
 
 
 class RbsBackgroundTask(threading.Thread):
+    """
+    Thread class performing the continuous batch download of Facebook stories
+    """
     def __init__(self, p_pool):
+        """
+        Sets up class variable and launches the thread.
+        
+        :param p_pool: :any:`EcConnectionPool` passed from the main :any:`RbsApp` application class.
+        """
         super().__init__(daemon=True)
 
+        #: Local logger
         self.m_logger = logging.getLogger('RbsBackgroundTask')
 
+        #: The browser driver class (:any:`BrowserDriver`)
         self.m_browser = None
 
+        #: Connection pool
         self.m_pool = p_pool
 
-        # starts the background thread
+        # starts the thread
         self.start()
 
     def internet_check(self):
+        """
+        Presence of internet connection verification. Uses :any:`OpenvpnWrapper.getOwnIp`
+        
+        :return: `True` if internet can be reached. `False` otherwise. 
+        """
         try:
             l_ip = OpenvpnWrapper.getOwnIp()
 
             # if this point is reached --> the internet connection is probably ok
             self.m_logger.info('Own IP: {0}'.format(l_ip))
             l_internetOk = True
-        except OpenVpnFailure as e:
-            self.m_logger.warning('Own IP failure: ' + repr(e))
+        except OpenVpnFailure as e1:
+            self.m_logger.warning('Own IP failure: ' + repr(e1))
             l_internetOk = False
 
         return l_internetOk
 
     def log_phantom_connection(self, p_phantom, p_vpn, p_password, p_logIn=True, p_success=True):
+        """
+        Logs a phantom login or logout operation to `TB_EC_MSG` and `TB_PHANTOM_LOGIN`.
+        
+        :param p_phantom: Phantom ID (e-mail address)
+        :param p_vpn: Openvpn configuration filename (or `None`, if logout or no vpn for this phantom)
+        :param p_password: Phantom's password (or `None`, if logout)
+        :param p_logIn: True --> Login, False --> Logout
+        :param p_success: True --> Success, False --> Failure
+        :return: Nothing.
+        """
         # log message in TB_EC_MSG
         l_conn = self.m_pool.getconn('log_phantom_connection()')
         l_cursor = l_conn.cursor()
@@ -75,10 +101,11 @@ class RbsBackgroundTask(threading.Thread):
                 )
             )
             l_conn.commit()
-        except Exception as e:
-            self.m_logger.warning('TB_EC_MSG insert failure: {0}'.format(repr(e)))
+        except Exception as e1:
+            self.m_logger.warning('TB_EC_MSG insert failure: {0}'.format(repr(e1)))
             raise
 
+        # Log message in TB_PHANTOM_LOGIN
         l_cursor.close()
         l_cursor = l_conn.cursor()
         try:
@@ -102,14 +129,31 @@ class RbsBackgroundTask(threading.Thread):
                 )
             )
             l_conn.commit()
-        except Exception as e:
-            self.m_logger.warning('TB_PHANTOM_LOGIN insert failure: {0}'.format(repr(e)))
+        except Exception as e1:
+            self.m_logger.warning('TB_PHANTOM_LOGIN insert failure: {0}'.format(repr(e1)))
             raise
 
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
     def run(self):
+        """
+        Actual continuous FB stories download loop, executed by the class thread. Perform the following tasks,
+        in an infinite loop:
+        
+        * Create a :any:`BrowserDriver` instance if none exists (only once).
+        * Logs in a new phantom if none logged in.
+        * Logs out if the browser driver is stale.
+        * Downloads a random user profile (taken from `TB_USER`).
+        
+        On each loop, there is a random delay (between :any:`EcAppParam.gcm_bkgMinDelay` and
+        :any:`EcAppParam.gcm_bkgMaxDelay`) which is performed while doing random mouse movements if
+        the browser driver is there and a phantom is logged in, or as a simple `time.sleep()` otherwise.
+        
+        The loop also checks for the presence of the internet connection and suspends operation if not.
+        
+        :return: Nothing 
+        """
         l_phantomList = [
             ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn'),
             ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None),
@@ -117,38 +161,41 @@ class RbsBackgroundTask(threading.Thread):
             ('nicolas.reimen@gmail.com', 'murugan!', None),
         ]
 
-        l_phantomIndex = 0
+        l_phantomIndex = EcAppParam.gcm_startPhantomNo
 
         l_internetOk = True
         l_phantomId = ''
         while True:
-            l_sleep = random.randint(EcAppParam.gcm_bkgMinDelay, EcAppParam.gcm_bkgMaxDelay)
-            self.m_logger.info('[{0}] Waiting for {1} seconds'.format(l_phantomId, l_sleep))
-
             # Internet connection test
             l_internetOkPrevious = l_internetOk
             l_internetOk = self.internet_check()
 
+            # random delay
+            l_sleep = random.randint(EcAppParam.gcm_bkgMinDelay, EcAppParam.gcm_bkgMaxDelay)
+            self.m_logger.info('[{0}] Waiting for {1} seconds'.format(l_phantomId, l_sleep))
             if self.m_browser is not None and self.m_browser.isLoggedIn() and l_internetOk:
+                # executed with random mouse movements if possible
                 self.m_browser.mouse_obfuscate(l_sleep)
             else:
                 time.sleep(l_sleep)
 
+            self.m_logger.info('>>>>>>>>>>>>>>> top >>>>>>>>>>>>>>>>>>>>>>>')
             l_internetOk = self.internet_check()
 
+            # if no internet connection, suspend operation
             if not l_internetOk:
                 self.m_logger.warning('Internet connection off')
                 continue
 
+            # if internet connection just reestablished, refresh page.
             if l_internetOk and not l_internetOkPrevious:
                 self.m_logger.warning('Internet connection reestablished - refreshing page')
                 self.m_browser.refresh_page()
 
-            self.m_logger.info('>>>>>>>>>>>>>>> top >>>>>>>>>>>>>>>>>>>>>>>')
-
+            # List of possible actions, depending on conditions:
             if self.m_browser is None:
-                # initial state: no browser driver yet
-                self.m_logger.info('>> create browser')
+                # 1. Initial state: no browser driver yet
+                self.m_logger.info('>> Create browser driver')
 
                 try:
                     self.m_browser = BrowserDriver()
@@ -158,8 +205,9 @@ class RbsBackgroundTask(threading.Thread):
                     self.m_browser = None
                     raise
             elif self.m_browser is not None and not self.m_browser.isLoggedIn():
-                # not logged in state (either at start or after a
-                self.m_logger.info('>> log in')
+                # 2. Not logged in state (either at start or after a stale-generated logout)
+                # --> Login
+                self.m_logger.info('>> login')
 
                 l_phantomId, l_phantomPwd, l_vpn = l_phantomList[l_phantomIndex]
                 l_phantomIndex += 1
@@ -179,24 +227,25 @@ class RbsBackgroundTask(threading.Thread):
                     self.m_logger.warning('Unable to log in: ' + repr(e))
                     self.log_phantom_connection(l_phantomId, l_vpn, l_phantomPwd, p_logIn=True, p_success=False)
             elif self.m_browser is not None and self.m_browser.isLoggedIn() and self.m_browser.isStale():
-                # stale browser situation
-                self.m_logger.info('>> stale browser')
+                # 3. Stale browser situation --> Logout
+                self.m_logger.info('>> Stale browser --> user logout')
 
                 # log out current user
                 try:
                     self.m_browser.log_out()
                     self.m_logger.info('*** User Logged out')
-                    self.log_phantom_connection(l_phantomId, '', '', p_logIn=False, p_success=True)
+                    self.log_phantom_connection(l_phantomId, None, None, p_logIn=False, p_success=True)
                     l_phantomId = ''
                 except Exception as e:
                     self.m_logger.warning('Unable to log out: ' + repr(e))
-                    self.log_phantom_connection(l_phantomId, '', '', p_logIn=False, p_success=False)
+                    self.log_phantom_connection(l_phantomId, None, None, p_logIn=False, p_success=False)
 
+                    # if there was an internet connection and the logout process failed: stop everything for analysis.
                     if self.internet_check():
                         sys.exit(0)
             else:
-                # normal situation: browser is ok and a new story can be fetched
-                self.m_logger.info('>> fetch one user feed')
+                # 4. Ordinary situation: browser is ok and a new story can be fetched
+                self.m_logger.info('>> fetch one random user feed')
                 try:
                     t0 = time.perf_counter()
                     self.m_browser.go_random()
@@ -214,17 +263,60 @@ class RbsBackgroundTask(threading.Thread):
 
 
 class RbsApp(EcAppCore):
+    """
+    Main application class. Subclass of generic EC app class :any:`EcAppCore`
+    
+    This class perform two separate tasks:
+    
+    * Launching the thread performing the continuous downloading of FB stories (:any:`RbsBackgroundTask`)
+    * Providing a response to the HTTP request for the display of results through the appropriate methods inherited
+      from the base :any:`EcAppCore` class.
+    """
     def __init__(self):
         super().__init__()
 
+        #: local logger
         self.m_logger = logging.getLogger('RbsApp')
 
         if EcAppParam.gcm_startGathering:
+            #: Background task performing continuous download of FB stories
             self.m_background = RbsBackgroundTask(self.m_connectionPool)
         else:
             self.m_background = None
 
-    def sessionList(self, p_requestHandler):
+    def get_responseGet(self, p_requestHandler):
+        """
+        Build the appropriate response based on the data provided by the request handler given in parameter.
+        
+        :param p_requestHandler: an :any:`EcRequestHandler` instance providing the HTTP request parameters.
+        :return: A string containing the HTML of the response
+        """
+        # completely useless line. Only there to avoid PEP-8 pedantic complaint
+        self.m_rq = p_requestHandler
+
+        self.m_logger.info('request: ' + p_requestHandler.path)
+        if p_requestHandler.path == '/test':
+            return """
+                <html>
+                    <head></head>
+                    <body>
+                        <p style="color: green;">Ok, we are in business ... </p>
+                    </body>
+                </html>
+            """
+        elif re.search('^/session/', p_requestHandler.path):
+            return self.oneSession(p_requestHandler)
+        elif re.search('^/story/', p_requestHandler.path):
+            return self.oneStory(p_requestHandler)
+        else:
+            return self.sessionList()
+
+    def sessionList(self):
+        """
+        Build the response for the "list of sessions" screen. No parameters necessary.
+        
+        :return: The list of sessions HTML. 
+        """
         l_conn = self.m_connectionPool.getconn('sessionList()')
         l_cursor = l_conn.cursor()
         try:
@@ -285,6 +377,13 @@ class RbsApp(EcAppCore):
         """.format(l_response)
 
     def oneSession(self, p_requestHandler):
+        """
+        Build the HTML for an individual session screen, i.e. the list of stories retrieved from that session.
+        
+        :param p_requestHandler: The :any:`EcRequestHandler` instance providing the session ID parameter. 
+        :return: The Session HTML.
+        """
+        # the session ID is the last member of the URL
         l_sessionId = re.sub('/session/', '', p_requestHandler.path)
         self.m_logger.info('l_sessionId: {0}'.format(l_sessionId))
         l_conn = self.m_connectionPool.getconn('oneSession()')
@@ -299,7 +398,7 @@ class RbsApp(EcAppCore):
 
             l_response = ''
             for l_idStory, l_sessionId, l_dtStory, l_dtCre, l_stType, \
-                l_json, l_likes, l_comments, l_shares in l_cursor:
+                    l_json, l_likes, l_comments, l_shares in l_cursor:
 
                 l_story = json.loads(l_json)
                 l_imgCount = len(l_story['images'])
@@ -364,6 +463,13 @@ class RbsApp(EcAppCore):
                 """.format(l_sessionId, l_response)
 
     def oneStory(self, p_requestHandler):
+        """
+        Build the HTML for an individual story screen.
+
+        :param p_requestHandler: The :any:`EcRequestHandler` instance providing the story ID parameter. 
+        :return: The story HTML.
+        """
+        # the story ID is the last member of the URL
         l_storyId = re.sub('/story/', '', p_requestHandler.path)
         self.m_logger.info('l_storyId: {0}'.format(l_storyId))
         l_conn = self.m_connectionPool.getconn('oneStory()')
@@ -377,11 +483,11 @@ class RbsApp(EcAppCore):
 
             l_response = ''
             for l_idStory, l_sessionId, l_dtStory, l_dtCre, \
-                l_stType, l_json, l_likes, l_comments, l_shares in l_cursor:
+                    l_stType, l_json, l_likes, l_comments, l_shares in l_cursor:
 
                 l_story = json.loads(l_json)
 
-                #<img src="data:image/jpeg;base64,
+                # <img src="data:image/jpeg;base64,
                 l_imgDisplay = ''
                 for l_imgB64 in l_story['images']:
                     l_imgDisplay += """
@@ -391,7 +497,7 @@ class RbsApp(EcAppCore):
                 l_html_disp = l_story['html'] if 'html' in l_story.keys() else ''
                 l_html_disp = re.sub(r'<', r'&lt;', l_html_disp)
                 l_html_disp = re.sub(r'>', r'&gt;&#8203;', l_html_disp)
-                #l_html_disp = re.sub(r'>', r'&gt; ', l_html_disp)
+                # l_html_disp = re.sub(r'>', r'&gt; ', l_html_disp)
 
                 l_likes = ''
                 if 'likes' in l_story.keys():
@@ -457,21 +563,21 @@ class RbsApp(EcAppCore):
                         <td colspan="2" style="word-wrap:break-word;">{15}</td>
                     <tr/>
                 """.format(
-                    l_idStory
-                    , l_story['text']
-                    , l_story['text_quoted']
-                    , l_story['type']
-                    , repr(l_story['from_list'])
-                    , l_story['date']
-                    , repr(l_story['date_quoted'])
-                    , repr(l_story['shared'])
-                    , 'Yes' if l_story['sponsored'] else 'No'
-                    , 'Yes' if l_story['with'] else 'No'
-                    , l_likes
-                    , l_comments, repr(l_story['comments']) if 'comments' in l_story.keys() else ''
-                    , l_story['shares'] if 'shares' in l_story.keys() else ''
-                    , l_imgDisplay
-                    , l_html_disp
+                    l_idStory,
+                    l_story['text'],
+                    l_story['text_quoted'],
+                    l_story['type'],
+                    repr(l_story['from_list']),
+                    l_story['date'],
+                    repr(l_story['date_quoted']),
+                    repr(l_story['shared']),
+                    'Yes' if l_story['sponsored'] else 'No',
+                    'Yes' if l_story['with'] else 'No',
+                    l_likes,
+                    l_comments, repr(l_story['comments']) if 'comments' in l_story.keys() else '',
+                    l_story['shares'] if 'shares' in l_story.keys() else '',
+                    l_imgDisplay,
+                    l_html_disp
                 )
         except Exception as e:
             self.m_logger.warning('TB_STORY query failure: {0}'.format(repr(e)))
@@ -490,26 +596,6 @@ class RbsApp(EcAppCore):
                 </html>
             """.format(l_response)
 
-    def get_responseGet(self, p_requestHandler):
-        # completely useless line. Only there to avoid PEP-8 pedantic complaint
-        self.m_rq = p_requestHandler
-
-        self.m_logger.info('request: ' + p_requestHandler.path)
-        if p_requestHandler.path == '/test':
-            return """
-                <html>
-                    <head></head>
-                    <body>
-                        <p style="color: green;">Ok, we are in business ... </p>
-                    </body>
-                </html>
-            """
-        elif re.search('^/session/', p_requestHandler.path):
-            return self.oneSession(p_requestHandler)
-        elif re.search('^/story/', p_requestHandler.path):
-            return self.oneStory(p_requestHandler)
-        else:
-            return self.sessionList(p_requestHandler)
 
 # Multi-threaded HTTP server according to https://pymotw.com/2/BaseHTTPServer/index.html#module-BaseHTTPServer
 class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
@@ -527,7 +613,26 @@ class StartApp:
         The actual entry point, called from ``if __name__ == "__main__":``. Does the following:
 
         #. Initialises the mailer (:any:`EcMailer.initMailer`)
+        #. Test the availability of the database connection.
         #. Initialises the logging system (:any:`EcLogger.logInit`)
+        #. Instantiates the application class (:any:`RbsApp`). This launches the background stories-downloading
+           thread.
+        #. Initialises the request handler class (:any:`EcRequestHandler.init_class`), passing it a handle 
+           on the application class.
+        #. Initialises the vpn wrapper class (:any:`OpenvpnWrapper.init_class`)
+        #. Instantiates the standard Python HTTP server class (:any:`ThreadedHTTPServer`). The request handler
+           class will be instantiated by this class and a handle to it is therefore passed to it.
+        #. Set up the appropriate locale (for proper date format handling)
+        #. Launches the server (:any:`l_httpd.serve_forever`)
+        
+        The dependencies between the main application classes is as follows:
+
+        HTTP server: one instance "running forever"
+            ↳ request handler: one instance for each HTTP request
+                ↳ application: one instance created at startup. Response building methods called by request handler
+                    ↳ Background threads:
+                        * Health check: launched by application base class (:any:`EcAppCore`)
+                        * Stories downloading: launched by app specific subclass (:any:`RbsApp`)
         """
         print('ScripTrans server starting ...')
 
