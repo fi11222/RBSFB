@@ -249,7 +249,7 @@ class RbsBackgroundTask(threading.Thread):
                 try:
                     t0 = time.perf_counter()
                     self.m_browser.go_random()
-                    #self.m_browser.go_to_id(None, 'ArmyAnonymous/', None, p_name='Anonymous', p_type='Page')
+                    #self.m_browser.go_to_id(None, 'william.mcintosh.395', None)
                     self.m_browser.get_fb_profile()
                     self.m_logger.info(
                         '*** User data download complete. Elapsed time: {0}'.format(time.perf_counter() - t0))
