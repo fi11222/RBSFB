@@ -108,7 +108,7 @@ class EcAppParamFacebook(LocalParam):
     #: Minimum size of images to be downloaded (in both directions)
     gcm_minImageSize = 100
     #: True --> Expand comments list for each story
-    gcm_expandComments = False
+    gcm_expandComments = True
 
 # Browser driver parameters ----------------------------------------------------------------------------------------
 class EcAppParamBrowser(LocalParam):

@@ -1076,9 +1076,17 @@ class BrowserDriver:
         # DATA: (11) comments
         # Expanding comments
         if EcAppParam.gcm_expandComments:
+            l_newCommentsFound = False
             l_expansionOccurred = True
             while l_expansionOccurred:
                 l_expansionOccurred = False
+
+                # count Comments
+                l_commentCountBefore = len(p_story.find_elements_by_xpath(
+                        './/div[contains(@class, "UFICommentContentBlock")]'))
+                self.m_logger.info('l_commentCountBefore: {0}'.format(l_commentCountBefore))
+
+                l_additionalComments = 0
                 # list all "more comments" and "replies" links
                 for l_commentLink in p_story.find_elements_by_xpath(
                         './/a[@class="UFIPagerLink" or @class="UFICommentLink"]'):
@@ -1087,30 +1095,45 @@ class BrowserDriver:
                     if re.search('Hide.*Replies', l_commentLink.text):
                         continue
 
+                    self.m_logger.info(l_commentLink.text)
+                    l_increment = 1
+                    for l_word in l_commentLink.text.split(' '):
+                        try:
+                            l_increment = int(l_word)
+                            self.m_logger.info('l_increment: {0}'.format(l_increment))
+                            break
+                        except Exception:
+                            continue
+                    l_additionalComments += l_increment
+
                     # click the link
+                    self.m_driver.execute_script("arguments[0].scrollIntoView();", l_commentLink)
+                    self.m_driver.execute_script('window.scrollBy(0, {0});'.format(-100))
+                    WebDriverWait(self.m_driver, 10).until(EC.visibility_of(l_commentLink))
                     l_commentLink.click()
 
-                    try:
-                        # wait for the little round progressbar to appear
-                        WebDriverWait(self.m_driver, 15).until(
-                            EC.presence_of_element_located(
-                                (By.XPATH, '//span[contains(@class, "mls") and @role="progressbar"]')
-                            )
-                        )
-                    except EX.TimeoutException:
-                        self.m_logger.warning('Comments progress bar did not appear on time')
-
-                    try:
-                        # wait for the little round progressbar to disappear
-                        WebDriverWait(self.m_driver, 15).until(
-                            EC.invisibility_of_element_located(
-                                (By.XPATH, '//span[contains(@class, "mls") and @role="progressbar"]')
-                            )
-                        )
-                    except EX.TimeoutException:
-                        self.m_logger.warning('Comments progress bar did not disappear on time')
-
                     l_expansionOccurred = True
+                    l_newCommentsFound = True
+
+                self.m_logger.info('l_additionalComments: {0}'.format(l_additionalComments))
+
+                l_finished = False
+                l_loopCount = 0
+                while not l_finished:
+                    # count Comments again
+                    l_commentCountAfter = len(p_story.find_elements_by_xpath(
+                        './/div[contains(@class, "UFICommentContentBlock")]'))
+                    self.m_logger.info('l_commentCountAfter: {0}'.format(l_commentCountAfter))
+
+                    l_loopCount += 1
+                    l_finished = (l_commentCountAfter >= l_commentCountBefore + l_additionalComments) \
+                                 or l_loopCount >= 12
+
+                    time.sleep(.25)
+
+            if l_newCommentsFound:
+                # update lxml tree if new comments were retrieved
+                l_tree = html.fromstring(p_story.get_attribute('outerHTML'))
 
         # Recording comments
         l_comments = []
