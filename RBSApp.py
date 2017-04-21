@@ -248,9 +248,11 @@ class RbsBackgroundTask(threading.Thread):
                 self.m_logger.info('>> fetch one random user feed')
                 try:
                     t0 = time.perf_counter()
-                    self.m_browser.go_random()
-                    #self.m_browser.go_to_id(None, 'william.mcintosh.395', None)
-                    self.m_browser.get_fb_profile()
+                    # self.m_browser.go_random()
+                    # self.m_browser.get_fb_profile()
+                    # self.m_browser.go_to_id(None, 'william.mcintosh.395', None)
+                    self.m_browser.go_to_id(None, 'ArmyAnonymous/', None)
+                    self.m_browser.get_fb_profile(p_feedType='Page')
                     self.m_logger.info(
                         '*** User data download complete. Elapsed time: {0}'.format(time.perf_counter() - t0))
                 except EX.TimeoutException as e:
@@ -262,7 +264,7 @@ class RbsBackgroundTask(threading.Thread):
                     else:
                         self.m_logger.warning('Serious exception - but internet failure: ' + repr(e))
 
-                #sys.exit(0)
+                sys.exit(0)
 
 
 class RbsApp(EcAppCore):

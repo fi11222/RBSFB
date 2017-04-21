@@ -459,9 +459,12 @@ class BrowserDriver:
             self.m_logger.critical('Did not find user\'s page mainContainer. Id: {0}'.format(p_id))
             raise
 
-    def get_fb_profile(self, p_isOwnFeed=False, p_obfuscate=True):
+    def get_fb_profile(self, p_feedType='User', p_obfuscate=True):
         """
         Downloads the profile of a user. Before calling this method, the user's page must already have been loaded.
+        
+        :param p_feedType: 'User' (Ordinary user feed), 'Own' (Logged-in user's own feed) or 'Page' (Page feed).
+        :param p_obfuscate: True --> random mouse moves and right clicks while waiting. Otherwise, simple `os.sleep()`.
         :return: Nothing
         """
         self.m_logger.info("get_fb_profile()")
@@ -473,20 +476,29 @@ class BrowserDriver:
                     'rm -f ' + l_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
                 self.m_logger.info('Erasing files : ' + repr(l_result))
 
-        # prefix in the id attribute for all stories blocks (different for user's page and own feed)
-        l_storyPrefix = 'tl_unit_'
-        if p_isOwnFeed:
-            l_storyPrefix = 'hyperfeed_story_id_'
+        # determination of the xpath to find the stories in the feed
+        if p_feedType == 'Page':
+            l_storyXpath = '//div[@class="_427x"]/div[contains(@class, "_4-u2")]'
+            l_storyPrefix = None
+        else:
+            if p_feedType == 'Own':
+                # Logged-in user's own feed
+                l_storyPrefix = 'hyperfeed_story_id_'
+            else:
+                # Ordinary user feed
+                l_storyPrefix = 'tl_unit_'
+
+            l_storyXpath = '//div[contains(@id, "{0}")]'.format(l_storyPrefix)
 
         # wait for the presence of at least one such block
         try:
             WebDriverWait(self.m_driver, 15).until(
-                EC.presence_of_element_located((By.XPATH, '//div[contains(@id, "{0}")]'.format(l_storyPrefix))))
+                EC.presence_of_element_located((By.XPATH, l_storyXpath)))
         except EX.TimeoutException as e:
-            self.m_logger.warning('could not find prefix: {0}/{1}'.format(l_storyPrefix, repr(e)))
+            self.m_logger.warning('could not find story xpath: {0}/{1}'.format(l_storyXpath, repr(e)))
             raise
 
-        self.m_logger.info('presence of {0}'.format(l_storyPrefix))
+        self.m_logger.info('presence of {0}'.format(l_storyXpath))
 
         # repeat calls to analyze_story until no more stories can be obtained
         # list of story ids to avoid processing them twice
@@ -507,7 +519,7 @@ class BrowserDriver:
             l_fruitlessTry = True
             self.m_logger.info(
                 '### main loop. l_storyCount={0} l_fruitlessTries={1}'.format(l_storyCount, l_fruitlessTries))
-            for l_story in self.m_driver.find_elements_by_xpath('//div[contains(@id, "{0}")]'.format(l_storyPrefix)):
+            for l_story in self.m_driver.find_elements_by_xpath(l_storyXpath):
                 if l_storyCount > EcAppParam.gcm_max_story_count:
                     break
                 # inner loop: scans all stories present on the page
@@ -527,8 +539,8 @@ class BrowserDriver:
                         # analyze the story (includes scrolling past the story block to trigger the loading
                         # of new ones, if any). This call affects the current y position.
                         l_curY, l_retStory = \
-                            self.analyze_story(
-                                l_story, l_storyCount, l_curY, p_storyPrefix=l_storyPrefix, p_obfuscate=p_obfuscate)
+                            self.analyze_story(l_story, l_storyCount, l_curY, p_feedType,
+                                               p_storyPrefix=l_storyPrefix, p_obfuscate=p_obfuscate)
 
                         if l_retStory is not None:
                             l_storyDate = l_retStory['date']
@@ -716,13 +728,16 @@ class BrowserDriver:
 
         return l_value
 
-    def analyze_story(self, p_story, p_iter, p_curY, p_storyPrefix='hyperfeed_story_id_', p_obfuscate=True):
+    def analyze_story(self, p_story, p_iter, p_curY, p_feedType,
+                      p_storyPrefix='tl_unit_', p_obfuscate=True):
         """
         Story analysis method.
         :param p_story: WebDriver element positioned on the story
         :param p_iter: Story number (starting at 0)
         :param p_curY: Current scrolling Y position in the browser
+        :param p_feedType: 'User', 'Own' or 'Page'. Same as in :any:`BrowserDriver.get_fb_profile()`
         :param p_storyPrefix: Prefix of the `id` attribute of the story's outermost `<div>`
+            (for 'User' and 'Own' types only)
         :return: the new y scroll value
         """
         # timing counter
@@ -737,9 +752,16 @@ class BrowserDriver:
                 l_htmlShort += '...'
             print("-------- {0} --------\n{1}".format(p_iter, l_htmlShort))
 
-        # story ID without prefix
-        l_id = p_story.get_attribute('id')
-        l_id = re.sub(p_storyPrefix, '', l_id).strip()
+        if p_feedType == 'Page':
+            l_data_ft = p_story.get_attribute('data-ft')
+            self.m_logger.info('l_data_ft: {0}'.format(l_data_ft))
+            l_data_ft_dict = json.loads(l_data_ft)
+            self.m_logger.info('l_data_ft_dict: {0}'.format(l_data_ft_dict))
+            l_id = l_data_ft_dict['tl_objid']
+        else:
+            # story ID without prefix
+            l_id = p_story.get_attribute('id')
+            l_id = re.sub(p_storyPrefix, '', l_id).strip()
 
         # location and size
         l_location = p_story.location
