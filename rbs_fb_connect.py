@@ -513,6 +513,8 @@ class BrowserDriver:
         # just in case
         self.m_driver.execute_script('window.scrollTo(0, 0);')
 
+        l_selectorCount = 0
+        l_unfilteredCount = 0
         while l_storyCount <= EcAppParam.gcm_max_story_count and l_fruitlessTries < 3:
             # main loop will continue until the desired number of stories is reached or 3 fruitless
             # tries have occurred
@@ -575,6 +577,11 @@ class BrowserDriver:
                                 l_retStory['html'] = l_retStory['html'][:100] + '...'
                                 self.m_logger.info('json [{0}]: {1}'.format(len(l_jsonStore), json.dumps(l_retStory)))
 
+                            if l_retStory['comment_selector']:
+                                l_selectorCount += 1
+                            if l_retStory['comment_unfiltered']:
+                                l_unfilteredCount += 1
+
                             # open database connection
                             l_connect1 = psycopg2.connect(
                                 host=EcAppParam.gcm_dbServer,
@@ -633,6 +640,9 @@ class BrowserDriver:
         # mark the session as complete
         self.m_logger.info('Session [{0}] Complete'.format(self.m_dnl_ses_id))
         self.m_dnl_ses_id = None
+
+        self.m_logger.info(
+            'Stories with comment selector / unfiltered selected: {0}/{1}'.format(l_selectorCount, l_unfilteredCount))
 
     def scroll_obfuscate(self, y):
         l_stepCount = random.randint(5,15)
@@ -752,16 +762,29 @@ class BrowserDriver:
                 l_htmlShort += '...'
             print("-------- {0} --------\n{1}".format(p_iter, l_htmlShort))
 
+        # determination of post ID
         if p_feedType == 'Page':
             l_data_ft = p_story.get_attribute('data-ft')
-            self.m_logger.info('l_data_ft: {0}'.format(l_data_ft))
-            l_data_ft_dict = json.loads(l_data_ft)
-            self.m_logger.info('l_data_ft_dict: {0}'.format(l_data_ft_dict))
-            l_id = l_data_ft_dict['tl_objid']
+            if l_data_ft is not None:
+                self.m_logger.info('l_data_ft: {0}'.format(l_data_ft))
+                l_data_ft_dict = json.loads(l_data_ft)
+                self.m_logger.info('l_data_ft_dict: {0}'.format(l_data_ft_dict))
+                l_id = l_data_ft_dict['tl_objid']
+            else:
+                l_post_link = p_story.find_element_by_xpath('.//div[contains(@class, "_5u5j")]//a[@class="_5pcq"]')
+                l_post_link_href = l_post_link.get_attribute('href')
+                self.m_logger.info('l_post_link_href: {0}'.format(l_post_link_href))
+                l_match = re.search('([^/]+)($|/$)', l_post_link_href)
+                if l_match:
+                    l_id = l_match.group(1)
+                else:
+                    l_id = None
         else:
             # story ID without prefix
             l_id = p_story.get_attribute('id')
             l_id = re.sub(p_storyPrefix, '', l_id).strip()
+
+        self.m_logger.info('l_id: {0}'.format(l_id))
 
         # location and size
         l_location = p_story.location
@@ -775,7 +798,7 @@ class BrowserDriver:
         # calculation of scroll parameters
         l_yTop = l_location['y'] - 100 if l_location['y'] > 100 else 0
         l_deltaY = l_yTop - p_curY
-        #l_curY = l_yTop
+        # l_curY = l_yTop
         l_overshoot = l_location['y'] + l_size['height'] + 50
 
         # scroll past story (overshoot) and then to top of story.
@@ -1097,7 +1120,55 @@ class BrowserDriver:
 
         # DATA: (11) comments
         # Expanding comments
+        l_modeSelector = False
+        l_foundItem = False
         if EcAppParam.gcm_expandComments:
+            # try to select unfiltered mode if possible
+            l_modeLink = None
+            try:
+                # UFIRow UFILikeSentence _4204 _4_dr _3scp _3scs uiPopover _6a _6b _54nh uiContextualLayer
+                l_modeLink = p_story.find_element_by_xpath(
+                        './/div[contains(@class, "UFILikeSentence")]//div[@class="_3scp"]' +
+                        '//div[contains(@class, "uiPopover")]/a')
+
+                l_modeLink.click()
+                l_modeSelector = True
+            except EX.NoSuchElementException:
+                self.m_logger.info('No mode selector')
+                l_modeSelector = False
+
+            if l_modeSelector:
+                try:
+                    self.m_logger.info('Waiting for Popup menu')
+                    l_menu = WebDriverWait(self.m_driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, '//ul[@class="_54nf"]')))
+                    self.m_logger.info('Popup menu found: {0}'.format(l_menu.get_attribute('outerHTML')))
+
+                    l_foundItem = False
+                    l_loopCount = 0
+                    while not l_foundItem:
+                        for l_item in l_menu.find_elements_by_xpath('.//div[@class="_3scn"]'):
+                            self.m_logger.info('div[@class="_3scn"] --> ' + l_item.text)
+
+                            if re.search('unfiltered', l_item.text):
+                                l_item.click()
+                                l_foundItem = True
+                                time.sleep(.01)
+                                while True:
+                                    try:
+                                        p_story.find_element_by_xpath('.//div[contains(@class, "UFICommentContentBlock")]')
+                                        break
+                                    except EX.NoSuchElementException:
+                                        time.sleep(.01)
+                        time.sleep(1)
+                        l_loopCount += 1
+                        if l_loopCount == 3:
+                            l_modeLink.click()
+                            break
+
+                except EX.TimeoutException:
+                    self.m_logger.info('Popup menu NOT found')
+
             l_newCommentsFound = False
             l_expansionOccurred = True
             while l_expansionOccurred:
@@ -1114,10 +1185,11 @@ class BrowserDriver:
                         './/a[@class="UFIPagerLink" or @class="UFICommentLink"]'):
 
                     # do not activate the "Hide xxx replies" links
-                    if re.search('Hide.*Replies', l_commentLink.text):
+                    if re.search('Hide.*Replies', l_commentLink.text) or \
+                            re.search('Write\sa', l_commentLink.text):
                         continue
 
-                    self.m_logger.info(l_commentLink.text)
+                    self.m_logger.info('+++ Link Text: [{0}] +++'.format(l_commentLink.text))
                     l_increment = 1
                     for l_word in l_commentLink.text.split(' '):
                         try:
@@ -1128,11 +1200,60 @@ class BrowserDriver:
                             continue
                     l_additionalComments += l_increment
 
-                    # click the link
-                    self.m_driver.execute_script("arguments[0].scrollIntoView();", l_commentLink)
-                    self.m_driver.execute_script('window.scrollBy(0, {0});'.format(-100))
-                    WebDriverWait(self.m_driver, 10).until(EC.visibility_of(l_commentLink))
-                    l_commentLink.click()
+                    # make sure the link is in view
+                    l_scrollDone = False
+                    l_loopCount = 0
+                    while True:
+                        l_yTop1 =  self.m_driver.execute_script('return window.pageYOffset;')
+                        l_yTop2 =  self.m_driver.execute_script('return window.scrollY;')
+
+                        if l_yTop1 == l_yTop2:
+                            l_yTop = l_yTop1
+                        else:
+                            self.m_logger.info('l_yTop1/l_yTop2: {0}/{1}'.format(l_yTop1, l_yTop2))
+                            l_yTop = l_yTop2
+
+                        # getBoundingClientRect
+                        l_rect = self.m_driver.execute_script(
+                            'return arguments[0].getBoundingClientRect().top;', l_commentLink)
+                        self.m_logger.info('l_rect: {0}'.format(l_rect))
+
+                        l_yComment = l_commentLink.location['y']
+                        y = l_yComment - l_yTop
+                        l_yTarget = l_yComment - 200
+                        self.m_logger.info('[{0}] l_yTop/l_yComment/l_yTarget/y: {1}/{2}/{3}/{4}'.format(
+                            l_loopCount, l_yTop, l_yComment, l_yTarget, y))
+
+                        if (y > 150) and (y < self.m_browserHeight - 100):
+                            try:
+                                WebDriverWait(self.m_driver, 10).until(EC.visibility_of(l_commentLink))
+                                # click the link
+                                l_commentLink.click()
+                                break
+                            except EX.WebDriverException as e:
+                                self.m_logger.info('Error: ' + repr(e))
+
+                        # execute the scroll commands only once
+                        if not l_scrollDone:
+                            #self.m_driver.execute_script("arguments[0].scrollIntoView();", l_commentLink)
+                            #self.m_driver.execute_script('window.scrollBy(0, {0});'.format(-200))
+                            self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTarget))
+                            self.m_logger.info('Scrollto: {0} Done'.format(l_yTarget))
+                            l_scrollDone = True
+                        else:
+                            l_scrollValue = self.m_browserHeight-300
+                            if y < 0:
+                                l_scrollValue = - l_scrollValue
+                            self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_scrollValue))
+                            self.m_logger.info('ScrolBy: {0} Done'.format(l_scrollValue))
+
+                        if l_loopCount <= 1:
+                            time.sleep(.1)
+                        else:
+                            time.sleep(3)
+                        l_loopCount += 1
+
+                    # time.sleep(2)
 
                     l_expansionOccurred = True
                     l_newCommentsFound = True
@@ -1212,6 +1333,8 @@ class BrowserDriver:
         l_retStory['comments'] = l_comments
         l_retStory['comments_count'] = l_commentCount
         l_retStory['shares'] = l_shares
+        l_retStory['comment_selector'] = l_modeSelector
+        l_retStory['comment_unfiltered'] = l_foundItem
 
         if EcAppParam.gcm_verboseModeOn:
             print('l_fromHeader   : ' + l_fromHeader)
