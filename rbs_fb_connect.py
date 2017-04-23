@@ -623,10 +623,13 @@ class BrowserDriver:
                             l_connect1.close()
 
                         l_storyCount += 1
+                        self.m_logger.info(
+                            'Stories with comment selector / unfiltered selected: {0}/{1}'.format(l_selectorCount,
+                                                                                                  l_unfilteredCount))
                         if p_obfuscate:
                             l_wait = random.randint(
                                 EcAppParam.gcm_storiesMinDelay, EcAppParam.gcm_storiesMaxDelay)
-                            self.m_logger.info('[{0}] Wating for {1} seconds'.format(self.m_phantomID, l_wait))
+                            self.m_logger.info('[{0}] Waiting for {1} seconds'.format(self.m_phantomID, l_wait))
                             self.mouse_obfuscate(l_wait)
                     else:
                         self.m_logger.debug('--- Story already analyzed: ' + l_id)
@@ -1134,6 +1137,7 @@ class BrowserDriver:
                         './/div[contains(@class, "UFILikeSentence")]//div[@class="_3scp"]' +
                         '//div[contains(@class, "uiPopover")]/a')
 
+                self.m_logger.info('Mode selection link BEFORE: ' + l_modeLink.text)
                 self.make_visible_and_click(l_modeLink, l_modeLink)
                 l_modeSelector = True
             except EX.NoSuchElementException:
@@ -1157,7 +1161,7 @@ class BrowserDriver:
                             self.m_logger.info('div[@class="_3scn"] inner HTML --> ' + l_html)
 
                             if re.search('\(unfiltered\)', l_html+l_text):
-                                self.make_visible_and_click(l_modeLink, l_item)
+                                self.make_visible_and_click(l_modeLink, l_item, p_testVisibility=False)
                                 l_foundItem = True
                                 time.sleep(.01)
                                 while True:
@@ -1174,6 +1178,14 @@ class BrowserDriver:
 
                 except EX.TimeoutException:
                     self.m_logger.info('Popup menu NOT found')
+
+            if l_modeSelector:
+                self.m_logger.info('Mode selection link AFTER: ' + l_modeLink.text)
+
+                if re.search('\(unfiltered\)', l_modeLink.text):
+                    l_foundItem = True
+                else:
+                    l_foundItem = False
 
             l_newCommentsFound = False
             l_expansionOccurred = True
@@ -1318,7 +1330,7 @@ class BrowserDriver:
             'Processing story {0} complete. Elapsed time: {1:.3}'.format(p_iter, time.perf_counter() - t0))
         return l_curY, l_retStory
 
-    def make_visible_and_click(self, p_object, p_objectClick):
+    def make_visible_and_click(self, p_object, p_objectClick, p_testVisibility=True):
         l_scrollDone = False
         l_loopCount = 0
         while True:
@@ -1345,11 +1357,46 @@ class BrowserDriver:
                 '[{0}] l_yTop/l_yComment/l_yTarget/l_delta_y/l_delta_y_js: {1}/{2}/{3}/{4}/{5}'.format(
                 l_loopCount, l_yTop, l_yComment, l_yTarget, l_delta_y, l_delta_y_js))
 
-            if (l_delta_y > 150) and (l_delta_y < self.m_browserHeight - 100):
+            # perform click if object is in visibility range
+            # EXCEPTION: for the pop-up menu (p_testVisibility = False) do a scrollTo first.
+            # This is necessary because the scrollTo is based on the mode selection link (p_object)
+            # and not the menu item itself (p_objectClick) which appears invisible (bug)
+            # If p_object is in visibility range, it does not guarantee that p_objectClick, at the bottom of the menu,
+            # will be too. After a scrollTo, p_object will be at the top of the page and p_objectClick will therefore
+            # be visible too
+            if (l_delta_y > 150) and (l_delta_y < self.m_browserHeight - 100) and \
+                    not(not p_testVisibility and not l_scrollDone):
                 try:
-                    WebDriverWait(self.m_driver, 10).until(EC.visibility_of(p_objectClick))
                     # click the link
-                    p_objectClick.click()
+                    if p_testVisibility:
+                        WebDriverWait(self.m_driver, 10).until(EC.visibility_of(p_objectClick))
+                        p_objectClick.click()
+                    else:
+                        if not EcAppParam.gcm_headless:
+                            l_action = ActionChains(self.m_driver)
+                            l_action.move_to_element(p_object)
+                            l_action.context_click()
+                            l_action.perform()
+                            time.sleep(5)
+
+                            l_action = ActionChains(self.m_driver)
+                            l_action.move_to_element(p_object)
+                            l_action.move_by_offset(-150, 150)
+                            l_action.context_click()
+                            l_action.perform()
+                            time.sleep(5)
+
+                        l_action = ActionChains(self.m_driver)
+                        l_action.move_to_element(p_object)
+                        l_action.move_by_offset(-150, 150)
+                        l_action.click()
+                        l_action.perform()
+
+                        self.m_logger.info('Manual Click')
+                        if not EcAppParam.gcm_headless:
+                            time.sleep(5)
+                        else:
+                            time.sleep(.1)
                     break
                 except EX.WebDriverException as e:
                     self.m_logger.info('Error: ' + repr(e))
