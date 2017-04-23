@@ -212,8 +212,11 @@ class BrowserDriver:
             WebDriverWait(self.m_driver, 60).until(
                 EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
             self.m_logger.info('User page display started')
-        except EX.TimeoutException:
-            self.m_logger.critical('Did not find user ID/pwd input or post-login mainContainer')
+        except (EX.TimeoutException, EX.NoSuchElementException) as e:
+            if type(e) == EX.TimeoutException:
+                self.m_logger.critical('Did not find user ID/pwd input or post-login mainContainer')
+            else:
+                self.m_logger.critical('Could not find Login button')
 
             if self.m_vpn_handle is not None:
                 self.m_vpn_handle.close()
@@ -1131,7 +1134,7 @@ class BrowserDriver:
                         './/div[contains(@class, "UFILikeSentence")]//div[@class="_3scp"]' +
                         '//div[contains(@class, "uiPopover")]/a')
 
-                l_modeLink.click()
+                self.make_visible_and_click(l_modeLink, l_modeLink)
                 l_modeSelector = True
             except EX.NoSuchElementException:
                 self.m_logger.info('No mode selector')
@@ -1148,10 +1151,13 @@ class BrowserDriver:
                     l_loopCount = 0
                     while not l_foundItem:
                         for l_item in l_menu.find_elements_by_xpath('.//div[@class="_3scn"]'):
-                            self.m_logger.info('div[@class="_3scn"] --> ' + l_item.text)
+                            l_text = l_item.text
+                            l_html = l_item.get_attribute('outerHTML')
+                            self.m_logger.info('div[@class="_3scn"] text --> ' + l_text)
+                            self.m_logger.info('div[@class="_3scn"] inner HTML --> ' + l_html)
 
-                            if re.search('unfiltered', l_item.text):
-                                l_item.click()
+                            if re.search('\(unfiltered\)', l_html+l_text):
+                                self.make_visible_and_click(l_modeLink, l_item)
                                 l_foundItem = True
                                 time.sleep(.01)
                                 while True:
@@ -1200,60 +1206,8 @@ class BrowserDriver:
                             continue
                     l_additionalComments += l_increment
 
-                    # make sure the link is in view
-                    l_scrollDone = False
-                    l_loopCount = 0
-                    while True:
-                        l_yTop1 =  self.m_driver.execute_script('return window.pageYOffset;')
-                        l_yTop2 =  self.m_driver.execute_script('return window.scrollY;')
-
-                        if l_yTop1 == l_yTop2:
-                            l_yTop = l_yTop1
-                        else:
-                            self.m_logger.info('l_yTop1/l_yTop2: {0}/{1}'.format(l_yTop1, l_yTop2))
-                            l_yTop = l_yTop2
-
-                        # getBoundingClientRect
-                        l_rect = self.m_driver.execute_script(
-                            'return arguments[0].getBoundingClientRect().top;', l_commentLink)
-                        self.m_logger.info('l_rect: {0}'.format(l_rect))
-
-                        l_yComment = l_commentLink.location['y']
-                        y = l_yComment - l_yTop
-                        l_yTarget = l_yComment - 200
-                        self.m_logger.info('[{0}] l_yTop/l_yComment/l_yTarget/y: {1}/{2}/{3}/{4}'.format(
-                            l_loopCount, l_yTop, l_yComment, l_yTarget, y))
-
-                        if (y > 150) and (y < self.m_browserHeight - 100):
-                            try:
-                                WebDriverWait(self.m_driver, 10).until(EC.visibility_of(l_commentLink))
-                                # click the link
-                                l_commentLink.click()
-                                break
-                            except EX.WebDriverException as e:
-                                self.m_logger.info('Error: ' + repr(e))
-
-                        # execute the scroll commands only once
-                        if not l_scrollDone:
-                            #self.m_driver.execute_script("arguments[0].scrollIntoView();", l_commentLink)
-                            #self.m_driver.execute_script('window.scrollBy(0, {0});'.format(-200))
-                            self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTarget))
-                            self.m_logger.info('Scrollto: {0} Done'.format(l_yTarget))
-                            l_scrollDone = True
-                        else:
-                            l_scrollValue = self.m_browserHeight-300
-                            if y < 0:
-                                l_scrollValue = - l_scrollValue
-                            self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_scrollValue))
-                            self.m_logger.info('ScrolBy: {0} Done'.format(l_scrollValue))
-
-                        if l_loopCount <= 1:
-                            time.sleep(.1)
-                        else:
-                            time.sleep(3)
-                        l_loopCount += 1
-
-                    # time.sleep(2)
+                    # make sure the link is in view and click it
+                    self.make_visible_and_click(l_commentLink, l_commentLink)
 
                     l_expansionOccurred = True
                     l_newCommentsFound = True
@@ -1363,6 +1317,63 @@ class BrowserDriver:
         self.m_logger.info(
             'Processing story {0} complete. Elapsed time: {1:.3}'.format(p_iter, time.perf_counter() - t0))
         return l_curY, l_retStory
+
+    def make_visible_and_click(self, p_object, p_objectClick):
+        l_scrollDone = False
+        l_loopCount = 0
+        while True:
+            l_yTop1 = self.m_driver.execute_script('return window.pageYOffset;')
+            l_yTop2 = self.m_driver.execute_script('return window.scrollY;')
+
+            if l_yTop1 == l_yTop2:
+                l_yTop = l_yTop1
+            else:
+                self.m_logger.warning('l_yTop1/l_yTop2: {0}/{1}'.format(l_yTop1, l_yTop2))
+                l_yTop = l_yTop2
+
+            # getBoundingClientRect
+            l_delta_y_js = self.m_driver.execute_script(
+                'return arguments[0].getBoundingClientRect().top;', p_object)
+
+            l_yComment = p_object.location['y']
+            l_delta_y = l_yComment - l_yTop
+            l_yTarget = l_yComment - 200
+            if l_delta_y != l_delta_y_js:
+                self.m_logger.warning('l_delta_y_js/l_delta_y: {0}/{1}'.format(l_delta_y_js, l_delta_y))
+
+            self.m_logger.info(
+                '[{0}] l_yTop/l_yComment/l_yTarget/l_delta_y/l_delta_y_js: {1}/{2}/{3}/{4}/{5}'.format(
+                l_loopCount, l_yTop, l_yComment, l_yTarget, l_delta_y, l_delta_y_js))
+
+            if (l_delta_y > 150) and (l_delta_y < self.m_browserHeight - 100):
+                try:
+                    WebDriverWait(self.m_driver, 10).until(EC.visibility_of(p_objectClick))
+                    # click the link
+                    p_objectClick.click()
+                    break
+                except EX.WebDriverException as e:
+                    self.m_logger.info('Error: ' + repr(e))
+
+            # execute the scroll commands only once
+            if not l_scrollDone:
+                # self.m_driver.execute_script("arguments[0].scrollIntoView();", l_commentLink)
+                # self.m_driver.execute_script('window.scrollBy(0, {0});'.format(-200))
+
+                self.m_driver.execute_script('window.scrollTo(0, {0});'.format(l_yTarget))
+                self.m_logger.info('ScrollTo: {0} Done'.format(l_yTarget))
+                l_scrollDone = True
+            else:
+                l_scrollValue = self.m_browserHeight - 300
+                if l_delta_y < 0:
+                    l_scrollValue = - l_scrollValue
+                self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_scrollValue))
+                self.m_logger.info('ScrollBy: {0} Done'.format(l_scrollValue))
+
+            if l_loopCount <= 1:
+                time.sleep(.1)
+            else:
+                time.sleep(1)
+            l_loopCount += 1
 
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":
