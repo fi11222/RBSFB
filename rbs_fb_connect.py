@@ -15,6 +15,7 @@ from subprocess import run, PIPE
 import random
 import urllib.request
 import lxml.html as html
+import sys
 
 from ec_utilities import *
 import wrapvpn
@@ -363,11 +364,10 @@ class BrowserDriver:
         return l_id
 
     def loginAsAPI(self, p_user, p_passwd):
-        self.m_driver.get('http://localhost/FBWatch/FBWatchLogin.html')
-        # l_driver.get('http://192.168.0.51/FBWatch/FBWatchLogin.html')
+        self.m_driver.get(EcAppParam.gcm_api_login_url)
 
         try:
-            l_status = WebDriverWait(self.m_driver., 15).until(EC.presence_of_element_located((By.ID, 'status')))
+            l_status = WebDriverWait(self.m_driver, 15).until(EC.presence_of_element_located((By.ID, 'status')))
 
             # l_status = l_driver.find_element_by_id('status')
             while l_status.text != 'Please log into Facebook.':
@@ -390,7 +390,7 @@ class BrowserDriver:
             l_tree = html.fromstring(l_content)
 
             l_buttonText = BrowserDriver.get_unique(l_tree, '//body')
-            self.m_logger.info('l_buttonText:', l_buttonText[0:50])
+            self.m_logger.info('l_buttonText:' + l_buttonText[0:50])
 
             if re.match('Log In', l_buttonText):
                 time.sleep(2)
@@ -709,3 +709,66 @@ class BrowserDriver:
 
             time.sleep(.1)
             l_loopCount += 1
+
+# ---------------------------------------------------- Main section ----------------------------------------------------
+if __name__ == "__main__":
+    print('+------------------------------------------------------------+')
+    print('| FB scraping web service for ROAD B SCORE                   |')
+    print('|                                                            |')
+    print('| POST request sending test client                           |')
+    print('|                                                            |')
+    print('| v. 1.0 - 28/02/2017                                        |')
+    print('+------------------------------------------------------------+')
+
+    random.seed()
+
+    # mailer init
+    EcMailer.init_mailer()
+
+    # test connection to PostgresQL and wait if unavailable
+    gcm_maxTries = 20
+    l_iter = 0
+    while True:
+        if l_iter >= gcm_maxTries:
+            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', 'l_iter = {0}'.format(l_iter))
+            sys.exit(0)
+
+        l_iter += 1
+
+        try:
+            l_connect0 = psycopg2.connect(
+                host=EcAppParam.gcm_dbServer,
+                database=EcAppParam.gcm_dbDatabase,
+                user=EcAppParam.gcm_dbUser,
+                password=EcAppParam.gcm_dbPassword
+            )
+
+            l_connect0.close()
+            break
+        except psycopg2.Error as e0:
+            EcMailer.send_mail('WAITING: No PostgreSQL yet ...', repr(e0))
+            time.sleep(1)
+            continue
+
+    # logging system init
+    try:
+        EcLogger.log_init()
+    except Exception as e0:
+        EcMailer.send_mail('Failed to initialize EcLogger', repr(e0))
+
+    # g_browser = 'Firefox'
+    g_browser = 'Chrome'
+
+    l_phantomId0 = 'nicolas.reimen@gmail.com'
+    l_phantomPwd0 = 'murugan!'
+    # l_vpn = 'India.Maharashtra.Mumbai.TCP.ovpn'
+    l_vpn0 = None
+
+    l_driver = BrowserDriver()
+    # l_driver.login_as_scrape(l_phantomId0, l_phantomPwd0, l_vpn0)
+    l_driver.loginAsAPI(l_phantomId0, l_phantomPwd0)
+    #l_driver.go_random()
+    #l_driver.log_out()
+
+    if EcAppParam.gcm_headless:
+        l_driver.close()
