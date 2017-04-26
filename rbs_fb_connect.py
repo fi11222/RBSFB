@@ -75,7 +75,13 @@ class BrowserDriver:
         self.m_creationDate = datetime.datetime.now(tz=pytz.utc)
         self.m_expirationDate = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(days=3650)
         self.m_vpn_handle = None
+        # FB User ID for progress messages
         self.m_phantomID = ''
+        # FB User ID and password for API access
+        self.m_user_api = ''
+        self.m_pass_api = ''
+        # FB token for API access
+        self.m_token_api = ''
 
         if EcAppParam.gcm_headless:
             # if headless mode requested, starts the pyvirtualdisplay xvfb driver
@@ -362,6 +368,16 @@ class BrowserDriver:
         self.go_to_id(l_id, l_userId, l_id_internal)
 
         return l_id
+
+    def getFBToken(self):
+        l_accessToken = self.loginAsAPI(self.m_user_api, self.m_pass_api)
+        if l_accessToken is not None:
+            self.m_logger.info('g_FBToken before: {0}\n'.format(self.m_token_api))
+            self.m_FBToken = l_accessToken
+            self.m_logger.info('g_FBToken new   : {0}\n'.format(self.m_token_api))
+        else:
+            self.m_logger.warning('Cannot obtain FB Token for:' + self.m_user_api)
+            raise BrowserDriverException('Cannot obtain FB Token for:' + self.m_user_api)
 
     def loginAsAPI(self, p_user, p_passwd):
         self.m_driver.get(EcAppParam.gcm_api_login_url)
@@ -766,7 +782,7 @@ if __name__ == "__main__":
 
     l_driver = BrowserDriver()
     # l_driver.login_as_scrape(l_phantomId0, l_phantomPwd0, l_vpn0)
-    l_driver.loginAsAPI(l_phantomId0, l_phantomPwd0)
+    print('Token:', l_driver.loginAsAPI(l_phantomId0, l_phantomPwd0))
     #l_driver.go_random()
     #l_driver.log_out()
 
