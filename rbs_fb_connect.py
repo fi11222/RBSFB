@@ -372,12 +372,33 @@ class BrowserDriver:
     def getFBToken(self):
         l_accessToken = self.loginAsAPI(self.m_user_api, self.m_pass_api)
         if l_accessToken is not None:
-            self.m_logger.info('g_FBToken before: {0}\n'.format(self.m_token_api))
-            self.m_FBToken = l_accessToken
-            self.m_logger.info('g_FBToken new   : {0}\n'.format(self.m_token_api))
+            self.m_logger.info('g_FBToken before: {0}'.format(self.m_token_api))
+            self.m_token_api = l_accessToken
+            self.m_logger.info('g_FBToken new   : {0}'.format(self.m_token_api))
+            self.logout_api()
         else:
             self.m_logger.warning('Cannot obtain FB Token for:' + self.m_user_api)
             raise BrowserDriverException('Cannot obtain FB Token for:' + self.m_user_api)
+
+        return l_accessToken
+
+    def logout_api(self):
+        l_iframe = WebDriverWait(self.m_driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, '//span/iframe')))
+        self.m_logger.info('iframe name:' + l_iframe.get_attribute('name'))
+        self.m_driver.switch_to.frame(l_iframe.get_attribute('name'))
+
+        l_button = self.m_driver.find_element_by_xpath('//td/span[@class="_4z_9"]/span')
+        l_buttonText = l_button.text
+        self.m_logger.info('l_buttonText:' + l_buttonText[0:50])
+
+        if re.match('Log Out', l_buttonText):
+            l_button.click()
+        else:
+            self.m_logger.warning('Cannot log out; button text mismatch: ' + l_buttonText)
+            return
+
+        self.m_logger.info('Log out successful')
 
     def loginAsAPI(self, p_user, p_passwd):
         self.m_driver.get(EcAppParam.gcm_api_login_url)
@@ -397,22 +418,19 @@ class BrowserDriver:
 
                 l_mainWindowHandle = l_handle
 
-            l_button = self.m_driver.find_element_by_xpath('//span/iframe')
+            l_iframe = self.m_driver.find_element_by_xpath('//span/iframe')
+            self.m_logger.info('iframe name:' + l_iframe.get_attribute('name'))
+            self.m_driver.switch_to.frame(l_iframe.get_attribute('name'))
 
-            l_src = l_button.get_attribute('src')
-            l_content = urllib.request.urlopen(l_src).read().decode('utf-8').strip()
-
-            # extract a full xml/html tree from the page
-            l_tree = html.fromstring(l_content)
-
-            l_buttonText = BrowserDriver.get_unique(l_tree, '//body')
+            l_button = self.m_driver.find_element_by_xpath('//td/span[@class="_4z_9"]/span')
+            l_buttonText = l_button.text
             self.m_logger.info('l_buttonText:' + l_buttonText[0:50])
 
             if re.match('Log In', l_buttonText):
                 time.sleep(2)
                 l_button.click()
             else:
-                self.m_logger.info('Cannot log in: Button text mismatch: ' + l_buttonText)
+                self.m_logger.warning('Cannot log in; button text mismatch: ' + l_buttonText)
                 return None
 
             # Handle log-in pop-up
@@ -782,9 +800,17 @@ if __name__ == "__main__":
 
     l_driver = BrowserDriver()
     # l_driver.login_as_scrape(l_phantomId0, l_phantomPwd0, l_vpn0)
-    print('Token:', l_driver.loginAsAPI(l_phantomId0, l_phantomPwd0))
+    # print('Token:', l_driver.loginAsAPI(l_phantomId0, l_phantomPwd0))
+
+    # time.sleep(3)
+
+    # l_driver.logout_api()
     #l_driver.go_random()
     #l_driver.log_out()
+
+    l_driver.m_user_api = l_phantomId0
+    l_driver.m_pass_api = l_phantomPwd0
+    print(l_driver.getFBToken())
 
     if EcAppParam.gcm_headless:
         l_driver.close()
