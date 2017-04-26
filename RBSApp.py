@@ -4,10 +4,11 @@
 from ec_app_core import *
 from ec_request_handler import *
 
-from rbs_fb_connect import *
+from rbs_fb_profile import *
 
 from wrapvpn import OpenvpnWrapper, OpenVpnFailure
 
+import json
 import random
 import sys
 import locale
@@ -248,10 +249,13 @@ class RbsBackgroundTask(threading.Thread):
                 self.m_logger.info('>> fetch one random user feed')
                 try:
                     t0 = time.perf_counter()
-                    # self.m_browser.go_random()
-                    # self.m_browser.get_fb_profile()
-                    self.m_browser.go_to_id(None, 'ArmyAnonymous/', None)
-                    self.m_browser.get_fb_profile(p_feedType='Page')
+                    self.m_browser.go_random()
+
+                    l_downloader = ProfileDownloader(self.m_browser)
+                    l_downloader.get_fb_profile()
+
+                    # self.m_browser.go_to_id(None, 'ArmyAnonymous/', None)
+                    # self.m_browser.get_fb_profile(p_feedType='Page')
                     self.m_logger.info(
                         '*** User data download complete. Elapsed time: {0}'.format(time.perf_counter() - t0))
                 except EX.TimeoutException as e:
@@ -263,7 +267,7 @@ class RbsBackgroundTask(threading.Thread):
                     else:
                         self.m_logger.warning('Serious exception - but internet failure: ' + repr(e))
 
-                sys.exit(0)
+                # sys.exit(0)
 
 
 class RbsApp(EcAppCore):
