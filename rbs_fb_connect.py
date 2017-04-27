@@ -369,13 +369,45 @@ class BrowserDriver:
 
         return l_id
 
-    def getFBToken(self):
+    def freshen_token(self, p_request):
+        """
+        Replace the API access token present in the given request by the one stored in :any:`self.m_token_api`.
+         
+        :param p_request: The request to be freshened up. 
+        :return: The freshened up request.
+        """
+        # case where the token is not at the end of the param string
+        l_request = re.sub('access_token=[^&]&',
+                           'access_token={0}&'.format(self.m_token_api), p_request)
+        # case where the token is at the end of the param string
+        return re.sub('access_token=[^&]$',
+                      'access_token={0}'.format(self.m_token_api), l_request)
+
+    def renew_token_and_request(self, p_request):
+        """
+        Get a new token (and store it) and then update the given request, to make sure its embedded token 
+        is also updated.
+        
+        :param p_request: API request to be freshened up. 
+        :return: The freshened up request.
+        """
+        self.get_fb_token()
+        return self.freshen_token(p_request)
+
+    def get_fb_token(self):
+        """
+        Get an FB API access token by logging into a bogus application and retrieving its token.
+        
+        :return: The token (also stored in :any:`self.m_token_api` 
+        """
+        if self.m_token_api != '':
+            self.logout_api()
+
         l_accessToken = self.loginAsAPI(self.m_user_api, self.m_pass_api)
         if l_accessToken is not None:
             self.m_logger.info('g_FBToken before: {0}'.format(self.m_token_api))
             self.m_token_api = l_accessToken
             self.m_logger.info('g_FBToken new   : {0}'.format(self.m_token_api))
-            self.logout_api()
         else:
             self.m_logger.warning('Cannot obtain FB Token for:' + self.m_user_api)
             raise BrowserDriverException('Cannot obtain FB Token for:' + self.m_user_api)
@@ -793,8 +825,9 @@ if __name__ == "__main__":
     # g_browser = 'Firefox'
     g_browser = 'Chrome'
 
-    l_phantomId0 = 'nicolas.reimen@gmail.com'
-    l_phantomPwd0 = 'murugan!'
+    # l_phantomId0 = 'nicolas.reimen@gmail.com'
+    # l_phantomPwd0 = 'murugan!'
+    l_phantomId0, l_phantomPwd0 = 'kabir.abdulhami@gmail.com', '12Alhamdulillah',
     # l_vpn = 'India.Maharashtra.Mumbai.TCP.ovpn'
     l_vpn0 = None
 
@@ -810,7 +843,7 @@ if __name__ == "__main__":
 
     l_driver.m_user_api = l_phantomId0
     l_driver.m_pass_api = l_phantomPwd0
-    print(l_driver.getFBToken())
+    print(l_driver.get_fb_token())
 
     if EcAppParam.gcm_headless:
         l_driver.close()
