@@ -376,12 +376,15 @@ class BrowserDriver:
         :param p_request: The request to be freshened up. 
         :return: The freshened up request.
         """
-        # case where the token is not at the end of the param string
-        l_request = re.sub('access_token=[^&]&',
-                           'access_token={0}&'.format(self.m_token_api), p_request)
-        # case where the token is at the end of the param string
-        return re.sub('access_token=[^&]$',
-                      'access_token={0}'.format(self.m_token_api), l_request)
+        l_request = re.sub(r'access_token=[^&]+($|&)', r'___ACCESS_TOKEN___\1', p_request)
+
+        if not re.search(r'___ACCESS_TOKEN___', l_request):
+            self.m_logger.critical('Unable to locate token within request: ' + l_request)
+            raise BrowserDriverException('Unable to locate token within request: ' + l_request)
+
+        l_request = re.sub(r'___ACCESS_TOKEN___',
+                      r'access_token={0}'.format(self.m_token_api), l_request)
+        return l_request
 
     def renew_token_and_request(self, p_request):
         """

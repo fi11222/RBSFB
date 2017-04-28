@@ -110,10 +110,9 @@ class EcAppParamFacebook(LocalParam):
     #: True --> Expand comments list for each story
     gcm_expandComments = True
     #: Version of the FB API
-    gcm_api_version = 'v2.6'
+    gcm_api_version = 'v2.9'
     #: max number of posts retrieved from a page
-    gcm_max_post = 500
-
+    gcm_max_post = 50
     #: max number of days a post will be updated after its creation
     gcm_days_depth = 14
     #: number of days after which the detailed liked list of a post will be fetched
