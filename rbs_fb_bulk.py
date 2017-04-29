@@ -55,7 +55,7 @@ class BulkDownloader:
 
         try:
             l_cursor.execute("""
-                select "ID", "TX_NAME" from "TB_PAGES";
+                select "ID", "TX_NAME" from "TB_PAGES" order by "DT_CRE";
             """)
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_PAGES: {0}/{1}'.format(repr(e), l_cursor.query))
@@ -240,16 +240,18 @@ class BulkDownloader:
                 self.storeObject(
                     p_padding='',
                     p_type='Page',
-                    p_FBType='Page',
+                    p_date_creation='',
+                    p_date_modification='',
                     p_id=l_pageId,
                     p_parentId='',
                     p_pageId='',
                     p_postId='',
-                    p_date='',
-                    p_likeCount=0,
+                    p_fb_type='Page',
+                    p_fb_status_type='Page',
                     p_shareCount=0,
-                    p_name=l_pageName
-                )
+                    p_likeCount=0,
+                    p_permalink_url='',
+                    p_name=l_pageName)
 
                 # get posts from the page
                 # getPostsFromPage(l_pageId)
@@ -262,9 +264,22 @@ class BulkDownloader:
             else:
                 l_finished = True
 
-    def storeObject(self, p_padding, p_type, p_date,
-                    p_id, p_parentId, p_pageId, p_postId,
-                    p_FBType, p_shareCount, p_likeCount,
+    # l_icon l_permalink_url l_status_type l_updated_time l_place l_tags l_with_tags l_properties
+
+    def storeObject(self,
+                    p_padding,
+                    p_type,
+                    p_date_creation,
+                    p_date_modification,
+                    p_id,
+                    p_parentId,
+                    p_pageId,
+                    p_postId,
+                    p_fb_type,
+                    p_fb_status_type,
+                    p_shareCount,
+                    p_likeCount,
+                    p_permalink_url,
                     p_name='',
                     p_caption='',
                     p_desc='',
@@ -275,20 +290,33 @@ class BulkDownloader:
                     p_place='',
                     p_source='',
                     p_userId='',
-                    p_raw=''):
+                    p_tags='',
+                    p_with_tags='',
+                    p_properties=''):
 
         self.m_objectStoreAttempts += 1
 
         l_stored = False
 
+        # Creation date
         # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
-        l_date = re.sub('T', ' ', p_date)
-        l_date = re.sub(r'\+\d+$', '', l_date).strip()
+        l_date_creation = re.sub('T', ' ', p_date_creation)
+        l_date_creation = re.sub(r'\+\d+$', '', l_date_creation).strip()
 
-        if len(l_date) == 0:
-            l_date = datetime.datetime.now()
+        if len(l_date_creation) == 0:
+            l_date_creation = datetime.datetime.now()
         else:
-            l_date = datetime.datetime.strptime(l_date, '%Y-%m-%d %H:%M:%S')
+            l_date_creation = datetime.datetime.strptime(l_date_creation, '%Y-%m-%d %H:%M:%S')
+
+        # Last mod date
+        # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
+        l_date_modification = re.sub('T', ' ', p_date_modification)
+        l_date_modification = re.sub(r'\+\d+$', '', l_date_modification).strip()
+
+        if len(l_date_modification) == 0:
+            l_date_modification = datetime.datetime.now()
+        else:
+            l_date_modification = datetime.datetime.strptime(l_date_modification, '%Y-%m-%d %H:%M:%S')
 
         l_conn = self.m_pool.getconn('BulkDownloader.storeObject()')
         l_cursor = l_conn.cursor()
@@ -301,8 +329,11 @@ class BulkDownloader:
                     ,"ID_PAGE"
                     ,"ID_POST"
                     ,"DT_CRE"
+                    ,"DT_MOD"
+                    ,"TX_PERMALINK"
                     ,"ST_TYPE"
                     ,"ST_FB_TYPE"
+                    ,"ST_FB_STATUS_TYPE"
                     ,"TX_NAME"
                     ,"TX_CAPTION"
                     ,"TX_DESCRIPTION"
@@ -311,20 +342,28 @@ class BulkDownloader:
                     ,"ID_USER"
                     ,"N_LIKES"
                     ,"N_SHARES"
-                    ,"TX_PLACE")
+                    ,"TX_PLACE"
+                    ,"TX_TAGS"
+                    ,"TX_WITH_TAGS"
+                    ,"TX_PROPERTIES")
                 VALUES(
                     %s, %s, %s, %s, 
                     %s, %s, %s, %s, 
                     %s, %s, %s, %s, 
-                    %s, %s, %s, %s) 
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s) 
             """, (
                 p_id,
                 p_parentId,
                 p_pageId,
                 p_postId,
-                l_date,
+                l_date_creation,
+                l_date_modification,
+                p_permalink_url,
                 p_type,
-                p_FBType,
+                p_fb_type,
+                p_fb_status_type,
                 p_name,
                 p_caption,
                 p_desc,
@@ -333,7 +372,10 @@ class BulkDownloader:
                 p_userId,
                 p_likeCount,
                 p_shareCount,
-                p_place
+                p_place,
+                p_tags,
+                p_with_tags,
+                p_properties
                 )
             )
 
@@ -348,32 +390,6 @@ class BulkDownloader:
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
-
-        # store media if any
-        if len(p_link + p_picture + p_raw + p_source) > 0:
-            l_cursor = l_conn.cursor()
-            try:
-                l_cursor.execute("""
-                        INSERT INTO "TB_MEDIA"("ID_OWNER","TX_URL_LINK","TX_SRC_PICTURE","TX_RAW")
-                        VALUES(%s, %s, %s, %s)
-                    """, (
-                        p_id,
-                        p_link,
-                        # p_source is for videos, p_picture for images
-                        p_source if len(p_source) > 0 else p_picture,
-                        p_raw
-                    )
-                )
-                l_conn.commit()
-                l_stored = True
-            except psycopg2.IntegrityError as e:
-                self.m_logger.info('{0}Object already in TB_MEDIA[{1}]'.format(p_padding, repr(e)))
-                l_conn.rollback()
-            except Exception as e:
-                self.m_logger.info('TB_MEDIA Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
-                raise BulkDownloaderException('TB_MEDIA Unknown Exception: {0}'.format(repr(e)))
-
-            l_cursor.close()
 
         self.m_pool.putconn(l_conn)
 
@@ -419,6 +435,39 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+    def store_media(
+            self, p_id, p_fb_type, p_desc, p_title, p_tags, p_target, p_media, p_media_src, p_width, p_height):
+
+        l_conn = self.m_pool.getconn('BulkDownloader.storeUser()')
+        l_cursor = l_conn.cursor()
+
+        try:
+            l_cursor.execute("""
+                INSERT INTO "TB_MEDIA"(
+                    "ID_OWNER"
+                    ,"ST_FB_TYPE"
+                    ,"TX_DESC"
+                    ,"TX_TITLE"
+                    ,"TX_TAGS"
+                    ,"TX_TARGET"
+                    ,"TX_MEDIA"
+                    ,"TX_MEDIA_SRC"
+                    ,"N_WIDTH"
+                    ,"N_HEIGHT"
+                )
+                VALUES( 
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s)
+            """, (p_id, p_fb_type, p_desc, p_title, p_tags, p_target, p_media, p_media_src, p_width, p_height))
+            l_conn.commit()
+        except Exception as e:
+            self.m_logger.warning('TB_MEDIA Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('TB_MEDIA Unknown Exception: {0}'.format(repr(e)))
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
+
     @classmethod
     def getOptionalField(self, p_json, p_field):
         l_value = ''
@@ -444,11 +493,9 @@ class BulkDownloader:
                      'access_token={3}&fields={4}').format(
             EcAppParam.gcm_api_version, p_id, EcAppParam.gcm_limit, self.m_browserDriver.m_token_api, l_fieldList)
 
-        # print('   l_request:', l_request)
         l_response = self.performRequest(l_request)
-
         l_responseData = json.loads(l_response)
-        # print('   Paging:', l_responseData['paging'])
+
         if len(l_responseData['data']) > 0:
             self.m_logger.info('   Latest date:' + l_responseData['data'][0]['created_time'])
 
@@ -477,6 +524,7 @@ class BulkDownloader:
                 l_days_old = (datetime.datetime.now() - l_msgDate).days
                 self.m_logger.info('   Days old    : {0}'.format(l_days_old))
                 if l_days_old > EcAppParam.gcm_days_depth:
+                    self.m_logger.info('   ---> Too old, stop this page')
                     l_finished = True
                     break
 
@@ -497,8 +545,8 @@ class BulkDownloader:
                 l_story, l_storyShort = BulkDownloader.getOptionalField(l_post, 'story')
                 l_message, l_messageShort = BulkDownloader.getOptionalField(l_post, 'message')
 
-                l_link, x = BulkDownloader.getOptionalField(l_post, 'link')
                 l_object_id, x = BulkDownloader.getOptionalField(l_post, 'object_id')
+                l_link, x = BulkDownloader.getOptionalField(l_post, 'link')
                 l_picture, x = BulkDownloader.getOptionalField(l_post, 'picture')
                 l_source, x = BulkDownloader.getOptionalField(l_post, 'source')
 
@@ -509,19 +557,19 @@ class BulkDownloader:
 
                 l_place = ''
                 if 'place' in l_post.keys():
-                    l_place = l_post['place']
+                    l_place = json.dumps(l_post['place'])
 
                 l_tags = ''
                 if 'message_tags' in l_post.keys():
-                    l_tags = l_post['message_tags']
+                    l_tags = json.dumps(l_post['message_tags'])
 
                 l_with_tags = ''
                 if 'with_tags' in l_post.keys():
-                    l_with_tags = l_post['with_tags']
+                    l_with_tags = json.dumps(l_post['with_tags'])
 
                 l_properties = ''
                 if 'properties' in l_post.keys():
-                    l_properties = l_post['properties']
+                    l_properties = json.dumps(l_post['properties'])
 
                 self.m_logger.info('   name        : ' + l_nameShort)
                 if EcAppParam.gcm_verboseModeOn:
@@ -534,28 +582,26 @@ class BulkDownloader:
                     self.m_logger.info('   object_id   : ' + l_object_id)
                     self.m_logger.info('   shares      : {0}'.format(l_shares))
                     self.m_logger.info('   type        : ' + l_type)
-                    self.m_logger.info('   status type : ' + l_status_type)
-                    self.m_logger.info('   link        : ' + l_link)
-                    self.m_logger.info('   source      : ' + l_source)
-                    self.m_logger.info('   picture     : ' + l_picture)
                     self.m_logger.info('   updated time: ' + l_updated_time)
                     self.m_logger.info('   with        : {0}'.format(l_with_tags))
                     self.m_logger.info('   tags        : {0}'.format(l_tags))
-                    self.m_logger.info('   properties  : {0}'.format(l_properties))
                     self.m_logger.info('   place       : {0}'.format(l_place))
 
                 # store post information
                 if self.storeObject(
                         p_padding='   ',
                         p_type='Post',
-                        p_FBType=l_type,
+                        p_date_creation=l_postDate,
+                        p_date_modification=l_updated_time,
                         p_id=l_postId,
                         p_parentId=p_id,
                         p_pageId=p_id,
                         p_postId='',
-                        p_date=l_postDate,
-                        p_likeCount=0,
+                        p_fb_type=l_type,
+                        p_fb_status_type=l_status_type,
                         p_shareCount=l_shares,
+                        p_likeCount=0,
+                        p_permalink_url=l_permalink_url,
                         p_name=l_name,
                         p_caption=l_caption,
                         p_desc=l_description,
@@ -566,20 +612,24 @@ class BulkDownloader:
                         p_place=l_place,
                         p_source=l_source,
                         p_userId=l_userId,
-                        p_raw=json.dumps(l_post['attachment']) if 'attachment' in l_post.keys() else ''
-                    ):
+                        p_tags=l_tags,
+                        p_with_tags=l_with_tags,
+                        p_properties=l_properties):
                     # get comments
-                    self.getPostAttachments(l_postId)
-                    # self.getComments(l_postId, l_postId, p_id, 0)
-                    #time.sleep(5)
-
+                    self.getPostAttachments(l_postId, l_status_type, l_source, l_link, l_picture, l_properties)
+                    self.getComments(l_postId, l_postId, p_id, 0)
+                    # time.sleep(5)
                 else:
                     # if already in DB ---> break loop
+                    self.m_logger.info(
+                        '   ---> Post already in DB, stop this page')
                     l_finished = True
                     break
 
                 l_postCount += 1
                 if l_postCount > EcAppParam.gcm_max_post:
+                    self.m_logger.info(
+                        '   ---> Maximum number of posts ({0}) reached, stop this page'.format(l_postCount))
                     l_finished = True
                     break
 
@@ -596,48 +646,87 @@ class BulkDownloader:
 
             # end while not l_finished:
 
-    def getPostAttachments(self, p_id):
+    def getPostAttachments(self, p_id, p_status_type, p_source, p_link, p_picture, p_properties):
         # get list of attachments attached to this post
-        l_fieldList = 'description,description_tags,media,target,title,type,url'
+        l_fieldList = 'description,description_tags,media,target,title,type,url,attachments,subattachments'
 
         l_request = ('https://graph.facebook.com/{0}/{1}/attachments?limit={2}&' +
                      'access_token={3}&fields={4}').format(
             EcAppParam.gcm_api_version, p_id, EcAppParam.gcm_limit, self.m_browserDriver.m_token_api, l_fieldList)
 
-        # print('   l_request:', l_request)
         l_response = self.performRequest(l_request)
-
         l_responseData = json.loads(l_response)
-        # print('   Paging:', l_responseData['paging'])
+
+        # self.m_logger.info(l_response)
+
+        self.scan_attachments(l_responseData['data'],
+                              p_id, p_status_type, p_source, p_link, p_picture, p_properties, 1)
+
+    def scan_attachments(self, p_attachment_list,
+                         p_id, p_status_type, p_source, p_link, p_picture, p_properties, p_depth):
+
+        l_depthPadding = ' ' * (p_depth * 3)
 
         l_attachmentCount = 0
-        for l_attachment in l_responseData['data']:
+        for l_attachment in p_attachment_list:
             l_description, x = BulkDownloader.getOptionalField(l_attachment, 'description')
             l_title, x = BulkDownloader.getOptionalField(l_attachment, 'title')
             l_type, x = BulkDownloader.getOptionalField(l_attachment, 'type')
             l_url, x = BulkDownloader.getOptionalField(l_attachment, 'url')
 
-            l_description_tags = ''
+            l_description_tags = None
             if 'description_tags' in l_attachment.keys():
-                l_description_tags = l_attachment['description_tags']
-            l_media = ''
+                l_description_tags = json.dumps(l_attachment['description_tags'])
+
+            l_src = None
+            l_width = None
+            l_height = None
+            l_media = None
             if 'media' in l_attachment.keys():
                 l_media = l_attachment['media']
-            l_target = ''
+                # self.m_logger.info('Keys: {0}'.format(list(l_media.keys())))
+                if list(l_media.keys()) == ['image']:
+                    try:
+                        l_src = l_media['image']['src']
+                        l_width = int(l_media['image']['width'])
+                        l_height = int(l_media['image']['height'])
+                    except ValueError:
+                        self.m_logger.warning('Cannot convert [{0}] or [{1}]'.format(
+                            l_media['image']['width'], l_media['image']['height']))
+                    except KeyError:
+                        self.m_logger.warning('Missing key in: {0}'.format(l_media['image']))
+                l_media = json.dumps(l_attachment['media'])
+
+            l_target = None
             if 'target' in l_attachment.keys():
-                l_target = l_attachment['target']
+                l_target = json.dumps(l_attachment['target'])
 
             self.m_logger.info(
-                '   ++++[ {0}/{1} ]++++++++++++ATTACHMENT++++++++++++++++++++++++'.format(
-                    l_attachmentCount, self.m_page))
+                '{0}++++[ {1}/{2} ]++++++++++++{3}ATTACHMENT++++++++++++++++++++++++'.format(
+                    l_depthPadding, l_attachmentCount, self.m_page, 'SUB' if p_depth >= 2 else ''))
 
-            self.m_logger.info('   Description : ' + l_description)
-            self.m_logger.info('   Title       : ' + l_title)
-            self.m_logger.info('   Type        : ' + l_type)
-            self.m_logger.info('   Url         : ' + l_url)
-            self.m_logger.info('   Tags        : {0}'.format(l_description_tags))
-            self.m_logger.info('   Media       : {0}'.format(l_media))
-            self.m_logger.info('   Target      : {0}'.format(l_target))
+            self.m_logger.info('{0}Type        : {1}'.format(l_depthPadding, l_type))
+            self.m_logger.info('{0}status type : {1}'.format(l_depthPadding, p_status_type))
+            self.m_logger.info('{0}Description : {1}'.format(l_depthPadding, l_description))
+            self.m_logger.info('{0}Title       : {1}'.format(l_depthPadding, l_title))
+            self.m_logger.info('{0}Tags        : {1}'.format(l_depthPadding, l_description_tags))
+            self.m_logger.info('{0}Target      : {1}'.format(l_depthPadding, l_target))
+            self.m_logger.info('{0}Url         : {1}'.format(l_depthPadding, l_url))
+            self.m_logger.info('{0}link        : {1}'.format(l_depthPadding, p_link))
+            self.m_logger.info('{0}Media       : {1}'.format(l_depthPadding, l_media))
+            self.m_logger.info('{0}Media/src   : {1}'.format(l_depthPadding, l_src))
+            self.m_logger.info('{0}Media/width : {1}'.format(l_depthPadding, l_width))
+            self.m_logger.info('{0}Media/height: {1}'.format(l_depthPadding, l_height))
+            self.m_logger.info('{0}source      : {1}'.format(l_depthPadding, p_source))
+            self.m_logger.info('{0}picture     : {1}'.format(l_depthPadding, p_picture))
+            self.m_logger.info('{0}properties  : {1}'.format(l_depthPadding, p_properties))
+
+            self.store_media(p_id, l_type, l_description, l_title, l_description_tags,
+                             l_target, l_media, l_src, l_width, l_height)
+
+            if 'subattachments' in l_attachment.keys():
+                self.scan_attachments(l_attachment['subattachments']['data'],
+                                      p_id, p_status_type, p_source, p_link, p_picture, p_properties, p_depth+1)
 
             l_attachmentCount += 1
 
@@ -645,17 +734,16 @@ class BulkDownloader:
         l_depthPadding = ' ' * ((p_depth + 2) * 3)
 
         # get list of comments attached to this post (or this comment)
-        l_fieldList = 'id,created_time,from,story,message,user_likes,like_count,comment_count,attachment,object'
+        l_fieldList = 'id,attachment,created_time,comment_count,from,like_count,message,'+ \
+                      'message_tags,user_likes'
 
         l_request = ('https://graph.facebook.com/{0}/{1}/comments?limit={2}&' +
                      'access_token={3}&fields={4}').format(
             EcAppParam.gcm_api_version, p_id, EcAppParam.gcm_limit, self.m_browserDriver.m_token_api, l_fieldList)
 
-        # print('   l_request:', l_request)
         l_response = self.performRequest(l_request)
-
         l_responseData = json.loads(l_response)
-        # print('   Paging:', l_responseData['paging'])
+
         if len(l_responseData['data']) > 0:
             self.m_logger.info('{0}Latest date: '.format(l_depthPadding) + l_responseData['data'][0]['created_time'])
 
@@ -688,59 +776,39 @@ class BulkDownloader:
                     # store user data
                     self.storeUser(l_userId, l_userName, l_commentDate, l_depthPadding)
 
-                l_story, l_storyShort = BulkDownloader.getOptionalField(l_comment, 'story')
                 l_message, l_messageShort = BulkDownloader.getOptionalField(l_comment, 'message')
 
+                l_tags = ''
+                if 'message_tags' in l_comment.keys():
+                    l_tags = json.dumps(l_comment['message_tags'])
+
                 if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('{0}story   : '.format(l_depthPadding) + l_storyShort)
                     self.m_logger.info('{0}message : '.format(l_depthPadding) + l_messageShort)
-
-                l_src = ''
-                l_url = ''
-                l_desc = ''
-                l_title = ''
-                if 'attachment' in l_comment.keys():
-                    if 'media' in l_comment['attachment'].keys() and \
-                                    'image' in l_comment['attachment']['media'].keys() and \
-                                    'src' in l_comment['attachment']['media']['image'].keys():
-                        l_src = l_comment['attachment']['media']['image']['src']
-
-                    if 'url' in l_comment['attachment'].keys():
-                        l_url = l_comment['attachment']['url']
-                    if 'title' in l_comment['attachment'].keys():
-                        l_title = l_comment['attachment']['title']
-                    if 'description' in l_comment['attachment'].keys():
-                        l_desc = l_comment['attachment']['description']
-
-                if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('{0}url     : '.format(l_depthPadding) + l_url)
-                    self.m_logger.info('{0}src     : '.format(l_depthPadding) + l_src)
+                    self.m_logger.info('{0}tags    : '.format(l_depthPadding) + l_tags)
 
                 # store comment information
-                self.storeObject(
+                if self.storeObject(
                     p_padding=l_depthPadding,
                     p_type='Comm',
-                    p_FBType='Comment',
+                    p_date_creation=l_commentDate,
+                    p_date_modification='',
                     p_id=l_commentId,
                     p_parentId=p_id,
                     p_pageId=p_pageId,
                     p_postId=p_postId,
-                    p_date=l_commentDate,
-                    p_likeCount=l_commentLikes,
+                    p_fb_type='Comment',
+                    p_fb_status_type='',
                     p_shareCount=0,
-                    p_name='',
-                    p_caption=l_title,
-                    p_desc=l_desc,
-                    p_story=l_story,
+                    p_likeCount=l_commentLikes,
+                    p_permalink_url='',
                     p_message=l_message,
-                    p_link=l_url,
-                    p_picture=l_src,
-                    p_place='',
-                    p_source='',
                     p_userId=l_userId,
-                    p_raw=json.dumps(l_comment['attachment']) if 'attachment' in l_comment.keys() else ''
-                )
-                l_commCount += 1
+                    p_tags=l_tags,
+                ):
+                    l_commCount += 1
+                    if 'attachment' in l_comment.keys():
+                        self.scan_attachments(
+                            [l_comment['attachment']], l_commentId, '', '', '', '', '', p_depth + 2)
 
                 # get comments
                 if l_commentCCount > 0:
