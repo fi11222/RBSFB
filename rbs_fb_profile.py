@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import lxml.html as html
-import sys
 import io
 import subprocess
 import json

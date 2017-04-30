@@ -13,8 +13,6 @@ from pyvirtualdisplay import Display
 from subprocess import run, PIPE
 
 import random
-import urllib.request
-import lxml.html as html
 import sys
 
 from ec_utilities import *
@@ -148,6 +146,24 @@ class BrowserDriver:
         :return: Boolean. True if past expiration date.
         """
         return self.m_expirationDate < datetime.datetime.now(tz=pytz.utc)
+
+    def internet_check(self):
+        """
+        Presence of internet connection verification. Uses :any:`OpenvpnWrapper.getOwnIp`
+
+        :return: `True` if internet can be reached. `False` otherwise. 
+        """
+        try:
+            l_ip = wrapvpn.OpenvpnWrapper.getOwnIp()
+
+            # if this point is reached --> the internet connection is probably ok
+            self.m_logger.info('Own IP: {0}'.format(l_ip))
+            l_internetOk = True
+        except wrapvpn.OpenVpnFailure as e1:
+            self.m_logger.warning('Own IP failure: ' + repr(e1))
+            l_internetOk = False
+
+        return l_internetOk
 
     def close(self):
         """

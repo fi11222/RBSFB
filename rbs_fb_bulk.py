@@ -1,11 +1,26 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
+from PIL import Image
+from PIL import ImageEnhance
+from PIL import ImageOps
+
 import json
+import io
+import base64
+import socket
+from tesserocr import PyTessBaseAPI
 
 from rbs_fb_connect import *
+from wrapvpn import *
 
 __author__ = 'Pavan Mahalingam'
+
+# ----------------------------------- Tesseract -----------------------------------------------------------
+# https://pypi.python.org/pypi/tesserocr
+# apt-get install tesseract-ocr libtesseract-dev libleptonica-dev
+# sudo pip3 install Cython
+# sudo pip3 install tesserocr
 
 class BulkDownloaderException(Exception):
     def __init__(self, p_msg):
@@ -47,10 +62,14 @@ class BulkDownloader:
         :return: Nothing
         """
 
-        self.m_browserDriver.get_fb_token()
-        self.getPages()
+        # self.m_browserDriver.get_fb_token()
+        # self.getPages()
+        # self.get_posts()
+        # self.fetch_images()
+        self.ocr_images()
 
-        l_conn = self.m_pool.getconn('BulkDownloader.bulk_download()')
+    def get_posts(self):
+        l_conn = self.m_pool.getconn('BulkDownloader.get_posts()')
         l_cursor = l_conn.cursor()
 
         try:
@@ -67,6 +86,211 @@ class BulkDownloader:
 
         l_cursor.close()
         self.m_pool.putconn(l_conn)
+
+    def fetch_images(self):
+        l_conn = self.m_pool.getconn('BulkDownloader.fetch_images()')
+        l_cursor = l_conn.cursor()
+        try:
+            l_cursor.execute("""
+                select "TX_MEDIA_SRC", "N_WIDTH", "N_HEIGHT", "ID_MEDIA_INTERNAL" 
+                from "TB_MEDIA"
+                where "TX_MEDIA_SRC" is not NULL and not "F_LOADED";
+            """)
+        except Exception as e:
+            self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
+
+        for l_src, l_width, l_height, l_internal in l_cursor:
+            self.m_logger.info('Src: {0}'.format(l_src))
+
+            l_img = None
+            l_fmt = None
+            l_match = re.search(r'/([^/]+_([no])\.(png|jpg|gif))\?', l_src)
+            if l_match:
+                l_img = l_match.group(1)
+                l_fmt = l_match.group(3)
+            else:
+                l_match = re.search(r'url=([^&]+\.(png|jpg|gif))[&%]', l_src)
+                if l_match:
+                    l_img = (urllib.parse.unquote(l_match.group(1))).split('/')[-1]
+                    l_fmt = l_match.group(2)
+                else:
+                    self.m_logger.warning('Image not found in:' + l_src)
+
+            if l_img is not None:
+                l_fmt = 'jpeg' if l_fmt.lower() == 'jpg' else l_fmt
+                if len(l_img) > 200:
+                    l_img = l_img[-200:]
+                self.m_logger.info('   -->: [{0}] {1}'.format(l_fmt, l_img))
+
+                l_attempts = 0
+                l_error = False
+                while True:
+                    l_attempts += 1
+                    if l_attempts > 10:
+                        if self.m_browserDriver.internet_check():
+                            l_msg = 'Cannot download image [{0}] Too many failed attempts'.format(l_img)
+                            self.m_logger.warning(l_msg)
+                            raise BulkDownloaderException(l_msg)
+                        else:
+                            self.m_logger.info('Internet Down. Waiting ...')
+                            time.sleep(5 * 60)
+                            l_attempts = 0
+
+                    try:
+                        l_img_content = Image.open(io.BytesIO(urllib.request.urlopen(l_src, timeout=20).read()))
+                        if l_img_content.mode != 'RGB':
+                            l_img_content = l_img_content.convert('RGB')
+                        l_img_content.save(os.path.join('./images_fb', l_img))
+
+                        l_outputBuffer = io.BytesIO()
+                        l_img_content.save(l_outputBuffer, format=l_fmt)
+                        l_image_txt = base64.b64encode(l_outputBuffer.getvalue()).decode()
+                        self.m_logger.info('[{0}] {1}'.format(len(l_image_txt), l_image_txt[:100]))
+                        break
+                    except urllib.error.URLError as e:
+                        if re.search(r'HTTPError 404', repr(e)):
+                            self.m_logger.warning('Trapped urllib.error.URLError/HTTPError 404: ' + repr(e))
+                            l_image_txt = repr(e)
+                            l_error = True
+                            break
+                        else:
+                            self.m_logger.info('Trapped urllib.error.URLError: ' + repr(e))
+                            continue
+                    except socket.timeout as e:
+                        self.m_logger.info('Trapped socket.timeout: ' + repr(e))
+                        continue
+                    except TypeError as e:
+                        self.m_logger.warning('Trapped TypeError (probably pillow  UserWarning: Couldn\'t ' +
+                                              ' allocate palette entry for transparency): ' + repr(e))
+                        l_image_txt = repr(e)
+                        l_error = True
+                        break
+                    except Exception as e:
+                        self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
+                        raise
+
+                l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images()')
+                l_cursor_write = l_conn_write.cursor()
+
+                try:
+                    l_cursor_write.execute("""
+                        update "TB_MEDIA"
+                        set "F_LOADED" = true, "TX_BASE64" = %s, "F_ERROR" = %s
+                        where "ID_MEDIA_INTERNAL" = %s;
+                    """, (l_image_txt, l_error, l_internal))
+                    l_conn_write.commit()
+                except Exception as e:
+                    self.m_logger.warning('Error updating TB_MEDIA: {0}'.format(repr(e)))
+                    l_conn_write.rollback()
+
+                l_cursor_write.close()
+                self.m_pool.putconn(l_conn_write)
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
+
+    def ocr_images(self):
+        l_conn = self.m_pool.getconn('BulkDownloader.fetch_images()')
+        l_cursor = l_conn.cursor()
+        try:
+            l_cursor.execute("""
+                select "ID_MEDIA_INTERNAL", "TX_BASE64" 
+                from "TB_MEDIA"
+                where "F_LOADED" and not "F_ERROR"
+                offset 200;
+            """)
+        except Exception as e:
+            self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
+
+        l_img_count = 0
+        for l_internal, l_base64 in l_cursor:
+            l_fileList = []
+            #self.m_logger.info('Src: {0}'.format(l_src))
+            l_img_content = Image.open(io.BytesIO(base64.b64decode(l_base64)))
+            l_file = 'images_ocr/base{0:03}.png'.format(l_img_count)
+            l_img_content.save(l_file)
+            l_fileList.append(l_file)
+
+            l_img_bw = ImageEnhance.Color(l_img_content).enhance(0.0)
+            l_img_bw = l_img_bw.resize((l_img_bw.width*3, l_img_bw.height*3))
+            l_file = 'images_ocr/base{0:03}_bw.png'.format(l_img_count)
+            l_img_bw.save(l_file)
+            l_fileList.append(l_file)
+
+            l_threshold = 180
+            v1 = .75
+            v2 = 1.5
+            for l_order in range(2):
+                for c1 in range(2):
+                    for c2 in range(2):
+                        p1 = v1 if c1 == 0 else v2
+                        p2 = v1 if c2 == 0 else v2
+
+                        if l_order == 1:
+                            l_img_s1 = ImageEnhance.Contrast(l_img_bw).enhance(p1)
+                            l_file = 'images_ocr/base{0:03}_a{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
+                            l_img_s1.save(l_file)
+                            l_fileList.append(l_file)
+
+                            l_img_s2 = ImageEnhance.Brightness(l_img_s1).enhance(p2)
+                            l_file = 'images_ocr/base{0:03}_b{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
+                            l_img_s2.save(l_file)
+                            l_fileList.append(l_file)
+                        else:
+                            l_img_s1 = ImageEnhance.Brightness(l_img_bw).enhance(p1)
+                            l_file = 'images_ocr/base{0:03}_a{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
+                            l_img_s1.save(l_file)
+                            l_fileList.append(l_file)
+
+                            l_img_s2 = ImageEnhance.Contrast(l_img_s1).enhance(p2)
+                            l_file = 'images_ocr/base{0:03}_b{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
+                            l_img_s2.save(l_file)
+                            l_fileList.append(l_file)
+
+                        # bw = gray.point(lambda x: 0 if x<128 else 255, '1')
+                        l_img_thr = l_img_s2.convert('L').point(lambda x: 0 if x<l_threshold else 255, '1')
+                        l_file = 'images_ocr/base{0:03}_thr{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
+                        l_img_thr.save(l_file)
+                        l_fileList.append(l_file)
+
+                        # PIL.ImageOps.invert(image)
+                        l_img_inv = l_img_s2.convert('L').point(lambda x: 255 if x<l_threshold else 0, '1')
+                        l_file = 'images_ocr/base{0:03}_inv{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
+                        l_img_inv.save(l_file)
+                        l_fileList.append(l_file)
+
+            with PyTessBaseAPI() as api:
+                l_result_list = []
+                for l_file in l_fileList:
+                    api.SetImageFile(l_file)
+                    l_txt = re.sub(r'\s+', r' ', api.GetUTF8Text()).strip()
+                    if len(l_txt) > 10:
+                        l_conf_list = api.AllWordConfidences()
+                        if len(l_conf_list) <= 3:
+                            continue
+
+                        l_avg = sum(l_conf_list)/float(len(l_conf_list))
+                        if l_avg < 75.0:
+                            continue
+
+                        l_result_list.append((l_avg, l_txt, l_file))
+                        # self.m_logger.info('[{0:03}] {1}'.format(l_img_count, l_file))
+                        # self.m_logger.info('      {0}'.format(l_txt))
+                        # self.m_logger.info('      {0:.2f} {1}'.format(l_avg, l_conf_list))
+
+                # print(l_result_list)
+                if len(l_result_list) > 0:
+                    print('-----[{0}]-------------------------------------------------'.format(l_img_count))
+                    l_result_list.sort(key=lambda l_tuple: l_tuple[0])
+                    # print(l_result_list)
+                    # l_avg, l_txt, l_file = l_result_list[-1]
+                    for l_avg, l_txt, l_file in l_result_list:
+                        l_file = re.sub(r'images_ocr/base', '', l_file)
+                        print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
+
+            l_img_count += 1
+            if l_img_count == 100:
+                break
 
     # calls Facebook's HTTP API and traps errors if any
     def performRequest(self, p_request):
@@ -90,7 +314,7 @@ class BulkDownloader:
         l_errCount = 0
         while not l_finished:
             try:
-                l_response = urllib.request.urlopen(l_request, timeout=10).read().decode('utf-8').strip()
+                l_response = urllib.request.urlopen(l_request, timeout=20).read().decode('utf-8').strip()
                 l_finished = True
 
             except urllib.error.HTTPError as e:
@@ -116,7 +340,7 @@ class BulkDownloader:
                     # Request limit reached --> wait G_WAIT_FB s and retry
                     if re.search(r'\(#17\) User request limit reached', l_FBMessage):
                         l_wait = EcAppParam.gcm_wait_fb
-                        self.m_logger.info('FB request limit msg: {0} --> Waiting for {1} seconds'.format(
+                        self.m_logger.warning('FB request limit msg: {0} --> Waiting for {1} seconds'.format(
                             l_FBMessage, l_wait))
 
                         l_sleepPeriod = 5 * 60
@@ -129,7 +353,7 @@ class BulkDownloader:
                             or re.search(r'An unknown error has occurred', l_FBMessage):
                         if l_errCount < 3:
                             l_wait = 10
-                            self.m_logger.info('FB unknown error: {0} --> Waiting for {1} seconds'.format(
+                            self.m_logger.warning('FB unknown error: {0} --> Waiting for {1} seconds'.format(
                                 l_FBMessage,l_wait))
 
                             time.sleep(l_wait)
@@ -137,7 +361,7 @@ class BulkDownloader:
                         else:
                             l_response = '{"data": []}'
 
-                            self.m_logger.warning('FB unknown error: {0} --> Returned: {1}\n'.format(
+                            self.m_logger.critical('FB unknown error: {0} --> Returned: {1}\n'.format(
                                 l_FBMessage, l_response))
 
                             l_finished = True
@@ -636,7 +860,7 @@ class BulkDownloader:
                 # End for l_post in l_responseData['data']:
 
             if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-                self.m_logger.info('   *** Getting next block ...')
+                self.m_logger.info('   *** Getting next post block ...')
                 l_request = l_responseData['paging']['next']
                 l_response = self.performRequest(l_request)
 
@@ -815,7 +1039,7 @@ class BulkDownloader:
                     self.getComments(l_commentId, p_postId, p_pageId, p_depth + 1)
 
             if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
-                self.m_logger.info('{0}[{1}] *** Getting next block ...'.format(l_depthPadding, l_commCount))
+                self.m_logger.info('{0}[{1}] *** Getting next comment block ...'.format(l_depthPadding, l_commCount))
                 l_request = l_responseData['paging']['next']
                 l_response = self.performRequest(l_request)
 
