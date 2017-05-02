@@ -9,12 +9,13 @@ import json
 import io
 import base64
 import socket
-from tesserocr import PyTessBaseAPI
+from tesserocr import PyTessBaseAPI, RIL
 
 from rbs_fb_connect import *
 from wrapvpn import *
 
 __author__ = 'Pavan Mahalingam'
+
 
 # ----------------------------------- Tesseract -----------------------------------------------------------
 # https://pypi.python.org/pypi/tesserocr
@@ -54,6 +55,69 @@ class BulkDownloader:
 
         # current page being downloaded
         self.m_page = None
+
+        #
+        self.m_lig_dict = {
+            'Ꜳ': 'AA',
+            'ꜳ': 'aa',
+            'Æ': 'AE',
+            'æ': 'ae',
+            'Ꜵ': 'AO',
+            'ꜵ': 'ao',
+            'Ꜷ': 'AJ',
+            'ꜷ': 'aj',
+            'Ꜹ': 'AV',
+            'ꜹ': 'av',
+            'Ꜻ': 'Av',
+            'ꜻ': 'av',
+            'Ꜽ': 'AY',
+            'ꜽ': 'ay',
+            'ȸ': 'db',
+            'Ǳ': 'DZ',
+            'ǲ': 'Dz',
+            'ǳ': 'dz',
+            'Ǆ': 'DZ',
+            'ǅ': 'Dz',
+            'ǆ': 'dz',
+            'ʥ': 'dz',
+            'ʤ': 'Dz',
+            '🙰': 'ex',
+            'ﬀ': 'ff',
+            'ﬃ': 'ffi',
+            'ﬄ': 'ffl',
+            'ﬁ': 'fi',
+            'ﬂ': 'Fl',
+            'ʩ': 'fn',
+            'Ĳ': 'IJ',
+            'ĳ': 'ij',
+            'Ǉ': 'LJ',
+            'ǈ': 'Lj',
+            'ǉ': 'lj',
+            'ʪ': 'ls',
+            'ʫ': 'lz',
+            'ɮ': 'lz',
+            'Œ': 'OE',
+            'œ': 'oe',
+            'Ꝏ': 'OO',
+            'ꝏ': 'oo',
+            'Ǌ': 'NJ',
+            'ǋ': 'Nj',
+            'ǌ': 'nj',
+            'ȹ': 'op',
+            'ẞ': 'SS',
+            'ß': 'ss',
+            'ﬆ': 'st',
+            'ﬅ': 'ft',
+            'ʨ': 'ta',
+            'ʦ': 'ts',
+            'ʧ': 'ts',
+            'Ꜩ': 'Tz',
+            'ꜩ': 'tz',
+            'ᵫ': 'ue',
+            'ꭐ': 'uil',
+            'Ꝡ': 'VY',
+            'ꝡ': 'vy',
+        }
 
     def bulk_download(self):
         """
@@ -197,99 +261,227 @@ class BulkDownloader:
                 select "ID_MEDIA_INTERNAL", "TX_BASE64" 
                 from "TB_MEDIA"
                 where "F_LOADED" and not "F_ERROR"
-                offset 200;
+                offset 500;
             """)
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
 
         l_img_count = 0
         for l_internal, l_base64 in l_cursor:
+            print('+++++++++++[{0}]++++++++++++++++++++++++++++++++++++++++++++++++++++++'.format(l_img_count))
             l_fileList = []
-            #self.m_logger.info('Src: {0}'.format(l_src))
-            l_img_content = Image.open(io.BytesIO(base64.b64decode(l_base64)))
-            l_file = 'images_ocr/base{0:03}.png'.format(l_img_count)
-            l_img_content.save(l_file)
-            l_fileList.append(l_file)
 
-            l_img_bw = ImageEnhance.Color(l_img_content).enhance(0.0)
-            l_img_bw = l_img_bw.resize((l_img_bw.width*3, l_img_bw.height*3))
-            l_file = 'images_ocr/base{0:03}_bw.png'.format(l_img_count)
-            l_img_bw.save(l_file)
-            l_fileList.append(l_file)
+            def add_image(p_image, p_suffix):
+                l_file = 'images_ocr/img{0:03}_{1}.png'.format(l_img_count, p_suffix)
+                p_image.save(l_file)
+                l_fileList.append(l_file)
+                return p_image
+
+            #self.m_logger.info('Src: {0}'.format(l_src))
+            l_raw = Image.open(io.BytesIO(base64.b64decode(l_base64)))
+
+            l_base = add_image(l_raw.resize((l_raw.width*3, l_raw.height*3)), 'base')
+            l_bw = add_image(ImageEnhance.Color(l_base).enhance(0.0), 'bw')
 
             l_threshold = 180
-            v1 = .75
-            v2 = 1.5
-            for l_order in range(2):
-                for c1 in range(2):
-                    for c2 in range(2):
-                        p1 = v1 if c1 == 0 else v2
-                        p2 = v1 if c2 == 0 else v2
+            v = [.70, .85, 1.25, 1.5]
+            for l_order in range(1):
+                for c1 in range(len(v)):
+                    for c2 in range(len(v)):
+                        p1 = v[c1]
+                        p2 = v[c2]
 
-                        if l_order == 1:
-                            l_img_s1 = ImageEnhance.Contrast(l_img_bw).enhance(p1)
-                            l_file = 'images_ocr/base{0:03}_a{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
-                            l_img_s1.save(l_file)
-                            l_fileList.append(l_file)
-
-                            l_img_s2 = ImageEnhance.Brightness(l_img_s1).enhance(p2)
-                            l_file = 'images_ocr/base{0:03}_b{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
-                            l_img_s2.save(l_file)
-                            l_fileList.append(l_file)
-                        else:
-                            l_img_s1 = ImageEnhance.Brightness(l_img_bw).enhance(p1)
-                            l_file = 'images_ocr/base{0:03}_a{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
-                            l_img_s1.save(l_file)
-                            l_fileList.append(l_file)
-
-                            l_img_s2 = ImageEnhance.Contrast(l_img_s1).enhance(p2)
-                            l_file = 'images_ocr/base{0:03}_b{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
-                            l_img_s2.save(l_file)
-                            l_fileList.append(l_file)
-
-                        # bw = gray.point(lambda x: 0 if x<128 else 255, '1')
-                        l_img_thr = l_img_s2.convert('L').point(lambda x: 0 if x<l_threshold else 255, '1')
-                        l_file = 'images_ocr/base{0:03}_thr{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
-                        l_img_thr.save(l_file)
-                        l_fileList.append(l_file)
-
-                        # PIL.ImageOps.invert(image)
-                        l_img_inv = l_img_s2.convert('L').point(lambda x: 255 if x<l_threshold else 0, '1')
-                        l_file = 'images_ocr/base{0:03}_inv{1}{2}{3}.png'.format(l_img_count, l_order, c1, c2)
-                        l_img_inv.save(l_file)
-                        l_fileList.append(l_file)
-
-            with PyTessBaseAPI() as api:
-                l_result_list = []
-                for l_file in l_fileList:
-                    api.SetImageFile(l_file)
-                    l_txt = re.sub(r'\s+', r' ', api.GetUTF8Text()).strip()
-                    if len(l_txt) > 10:
-                        l_conf_list = api.AllWordConfidences()
-                        if len(l_conf_list) <= 3:
+                        if p1 < 1.0 and p2 < 1.0:
                             continue
 
-                        l_avg = sum(l_conf_list)/float(len(l_conf_list))
+                        if l_order == 1:
+                            l_img_s1 = add_image(ImageEnhance.Brightness(l_bw).enhance(p1),
+                                                 'a{0}{1}{2}'.format(l_order, c1, c2))
+
+                            l_img_s2 = add_image(ImageEnhance.Contrast(l_img_s1).enhance(p2),
+                                                 'b{0}{1}{2}'.format(l_order, c1, c2))
+                        else:
+                            l_img_s1 = add_image(ImageEnhance.Contrast(l_bw).enhance(p1),
+                                                 'a{0}{1}{2}'.format(l_order, c1, c2))
+
+                            l_img_s2 = add_image(ImageEnhance.Brightness(l_img_s1).enhance(p2),
+                                                 'b{0}{1}{2}'.format(l_order, c1, c2))
+
+                        # bw = gray.point(lambda x: 0 if x<128 else 255, '1')
+                        add_image(l_img_s2.convert('L').point(lambda x: 0 if x<l_threshold else 255, '1'),
+                                  'thr{0}{1}{2}'.format(l_order, c1, c2))
+
+                        # PIL.ImageOps.invert(image)
+                        add_image(l_img_s2.convert('L').point(lambda x: 255 if x<l_threshold else 0, '1'),
+                                  'inv{0}{1}{2}'.format(l_order, c1, c2))
+
+            def get_resultList(p_fileList, p_api, p_lang):
+                print('get_resultList() p_lang: ' + p_lang)
+                l_result_list = []
+                l_max_avg = 0
+                l_max_dict_ratio = 0
+                for l_file in p_fileList:
+                    print(l_file)
+                    p_api.SetImageFile(l_file)
+
+                    l_txt = re.sub(r'\s+', r' ', p_api.GetUTF8Text()).strip()
+                    if len(l_txt) > 10:
+                        ri = p_api.GetIterator()
+                        l_more_3 = []
+                        l_raw_list = []
+                        l_list = []
+                        while True:
+                            try:
+                                l_word = re.sub('\s+', ' ', ri.GetUTF8Text(RIL.WORD)).strip()
+                                l_conf = ri.Confidence(RIL.WORD)
+                                l_dict = ri.WordIsFromDictionary()
+
+                                l_list_char = []
+                                for c in list(l_word):
+                                    try:
+                                        l_list_char.append(self.m_lig_dict[c])
+                                    except KeyError:
+                                        l_list_char.append(c)
+                                l_word = ''.join(l_list_char)
+
+                                l_full_alpha = False
+                                l_match = re.search(r'([a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[\.,;:\?!]*', l_word)
+                                if l_match:
+                                    l_full_alpha = (l_match.group(0) == l_word)
+
+                                l_full_num = False
+                                l_match = re.search(r'([0-9]+[:,\.][0-9]+|[0-9]+)[\.,;:\?!]*', l_word)
+                                if l_match:
+                                    l_full_num = (l_match.group(0) == l_word)
+
+                                print('{5} {0:.2f} {1} {2} {3} {4}'.format(
+                                    l_conf,
+                                    'D' if l_dict else ' ',
+                                    'A' if l_full_alpha else ' ',
+                                    'N' if l_full_num else ' ',
+                                    l_word,
+                                    p_lang))
+
+                                l_raw_list.append((l_word, int(l_conf), l_dict))
+                                if (l_full_num or l_full_alpha) and len(l_word) > 0:
+                                    l_list.append((l_word, int(l_conf), l_dict))
+                                    if len(l_word) > 2:
+                                        l_more_3.append(l_dict)
+
+                            except Exception as e:
+                                print(repr(e))
+                                break
+                            if not ri.Next(RIL.WORD):
+                                break
+
+                        if len(l_list) <= 3:
+                            continue
+
+                        l_conf_list = [l[1] for l in l_list]
+                        l_avg = sum(l_conf_list) / float(len(l_conf_list))
+
+                        if len(l_more_3) > 0:
+                            l_dict_ratio = sum([1 if l else 0 for l in l_more_3])/float(len(l_more_3))
+                        else:
+                            l_dict_ratio = 0.0
+
+                        print('Average Confidence : {0:.2f}'.format(l_avg))
+                        print('Dictionary ratio   : {0:.2f}'.format(l_dict_ratio))
                         if l_avg < 75.0:
                             continue
 
-                        l_result_list.append((l_avg, l_txt, l_file))
-                        # self.m_logger.info('[{0:03}] {1}'.format(l_img_count, l_file))
-                        # self.m_logger.info('      {0}'.format(l_txt))
-                        # self.m_logger.info('      {0:.2f} {1}'.format(l_avg, l_conf_list))
+                        l_txt = ' '.join([l[0] for l in l_list])
+                        l_result_list.append((l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list))
 
-                # print(l_result_list)
+                        if l_avg > l_max_avg:
+                            l_max_avg = l_avg
+                        if l_dict_ratio > l_max_dict_ratio:
+                            l_max_dict_ratio = l_dict_ratio
+
                 if len(l_result_list) > 0:
-                    print('-----[{0}]-------------------------------------------------'.format(l_img_count))
-                    l_result_list.sort(key=lambda l_tuple: l_tuple[0])
-                    # print(l_result_list)
-                    # l_avg, l_txt, l_file = l_result_list[-1]
-                    for l_avg, l_txt, l_file in l_result_list:
-                        l_file = re.sub(r'images_ocr/base', '', l_file)
-                        print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
+                    l_avg_dict_ratio = sum([l[1] for l in l_result_list])/float(len(l_result_list))
+                else:
+                    l_avg_dict_ratio = 0.0
+                print(
+                    '[{3}] {0} results, max avg: {1:.2f}, max dict. ratio {2:.2f}, avg. dict. ratio {4:.2f}'.format(
+                    len(l_result_list), l_max_avg, l_max_dict_ratio, p_lang, l_avg_dict_ratio))
+                return l_result_list, l_max_avg, l_max_dict_ratio, l_avg_dict_ratio
+
+            def display_results(p_result_list, p_lang):
+                print('-----[{0} / {1}]-------------------------------------------------'.format(l_img_count, p_lang))
+                p_result_list.sort(key=lambda l_tuple: l_tuple[0])
+                for l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list in p_result_list:
+                    print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
+                for l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list in p_result_list:
+                    l_file = re.sub(r'images_ocr/base', '', l_file)
+                    l_file = re.sub(r'\.png', '', l_file)
+                    print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
+                    print('     {0}'.format(l_list))
+                    print('     {0}'.format(l_raw_list))
+
+            with PyTessBaseAPI(lang='eng') as l_api_eng:
+                # api.SetVariable('user_words_suffix', 'user-words')
+                # api.InitFull(lang='joh', variables={'user_words_suffix': 'user-words'})
+                # print('textord_skewsmooth_offset2 : {0}'.format(api.GetVariableAsString('textord_skewsmooth_offset2')))
+                # print('load_system_dawg           : {0}'.format(api.GetVariableAsString('load_system_dawg')))
+                # print('user_words_suffix          : {0}'.format(api.GetVariableAsString('user_words_suffix')))
+                # print('GetLoadedLanguages         : {0}'.format(api.GetLoadedLanguages()))
+
+                l_result_list0, l_max_avg0, l_max_dict_ratio0, l_avg_dict_ratio0 = \
+                    get_resultList(l_fileList, l_api_eng, 'eng')
+                if len(l_result_list0) > 0:
+                    display_results(l_result_list0, 'eng')
+                # if len(l_result_list) > 0 and l_max_avg > 75.0 and l_max_dict_ratio > .6:
+                # else:
+            with PyTessBaseAPI(lang='joh') as l_api_joh:
+                l_result_list1, l_max_avg1, l_max_dict_ratio1, l_avg_dict_ratio1 = \
+                    get_resultList(l_fileList, l_api_joh, 'joh')
+                if len(l_result_list1) > 0:
+                    display_results(l_result_list1, 'joh')
+
+            def select_final_version(p_result_list):
+                l_width = 5
+                l_clip = 2
+                l_min_select = len(p_result_list) -1 -l_clip -l_width
+                l_max_select = len(p_result_list) -1 -l_clip
+
+                if l_min_select < 0:
+                    l_min_select = 0
+                if l_max_select < 0:
+                    l_max_select = len(p_result_list) -1
+
+                l_max_len = 0
+                for i in range(l_min_select, l_max_select+1):
+                    l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list = p_result_list[i]
+                    if len(l_list) > l_max_len:
+                        l_max_len = len(l_list)
+
+                for i in range(l_min_select, l_max_select+1):
+                    l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list = p_result_list[i]
+                    if len(l_list) == l_max_len:
+                        return l_txt
+
+                return ''
+
+            print('======[{0}]==================================================='.format(l_img_count))
+            if l_max_avg0 < l_max_avg1 and l_avg_dict_ratio0 < l_avg_dict_ratio1:
+                print('RESULT (joh):', select_final_version(l_result_list1))
+                print('[{0}] RESULT (joh):'.format(l_img_count), select_final_version(l_result_list1), file=sys.stderr)
+            elif l_max_avg1 < l_max_avg0 and l_avg_dict_ratio1 < l_avg_dict_ratio0:
+                print('RESULT (eng):', select_final_version(l_result_list0))
+                print('[{0}] RESULT (eng):'.format(l_img_count), select_final_version(l_result_list0), file=sys.stderr)
+            else:
+                l_txt_eng = select_final_version(l_result_list0)
+                l_txt_joh = select_final_version(l_result_list1)
+                if len(l_txt_eng) > len(l_txt_joh):
+                    print('RESULT (Undecided/eng):', l_txt_eng)
+                    print('[{0}] RESULT (Undecided/eng):'.format(l_img_count), l_txt_eng)
+                else:
+                    print('RESULT (Undecided/joh):', l_txt_joh)
+                    print('[{0}] RESULT (Undecided/joh):'.format(l_img_count), l_txt_joh)
 
             l_img_count += 1
-            if l_img_count == 100:
+            if l_img_count == 300:
                 break
 
     # calls Facebook's HTTP API and traps errors if any
