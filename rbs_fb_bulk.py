@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from PIL import Image
-from PIL import ImageEnhance
+from PIL import ImageEnhance, ImageFilter
 from PIL import ImageOps
 
 import json
@@ -56,7 +56,16 @@ class BulkDownloader:
         # current page being downloaded
         self.m_page = None
 
-        #
+        # Launch OCR thread
+        self.m_logger.info('starting Image ocr thread ....')
+        t1 = Thread(target=self.repeat_ocr_image)
+        t1.start()
+        self.m_logger.info('Image OCR thread started')
+
+        # boolean variable controlling the fetch image thread
+        self.m_fetch_proceed = True
+
+        # dictionary of UNICODE ligatures, to make sure none are kept in OCR text
         self.m_lig_dict = {
             'Ꜳ': 'AA',
             'ꜳ': 'aa',
@@ -126,11 +135,23 @@ class BulkDownloader:
         :return: Nothing
         """
 
-        # self.m_browserDriver.get_fb_token()
-        # self.getPages()
-        # self.get_posts()
+        self.m_logger.info('Getting FB token')
+        self.m_browserDriver.get_fb_token()
+
+        self.m_fetch_proceed = True
+        t1 = Thread(target=self.repeat_fetch_images)
+        t1.start()
+        self.m_logger.info('Image fetch thread launched')
+
+        self.getPages()
+        self.get_posts()
+        self.updatePosts()
+        self.getLikesDetail()
+        
+        self.m_fetch_proceed = False
+
+        t1.join()
         # self.fetch_images()
-        self.ocr_images()
 
     def get_posts(self):
         l_conn = self.m_pool.getconn('BulkDownloader.get_posts()')
@@ -151,6 +172,11 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+    def repeat_fetch_images(self):
+        while self.m_fetch_proceed:
+            self.fetch_images()
+            time.sleep(10)
+
     def fetch_images(self):
         l_conn = self.m_pool.getconn('BulkDownloader.fetch_images()')
         l_cursor = l_conn.cursor()
@@ -158,7 +184,8 @@ class BulkDownloader:
             l_cursor.execute("""
                 select "TX_MEDIA_SRC", "N_WIDTH", "N_HEIGHT", "ID_MEDIA_INTERNAL" 
                 from "TB_MEDIA"
-                where "TX_MEDIA_SRC" is not NULL and not "F_LOADED";
+                where "TX_MEDIA_SRC" is not NULL and not "F_LOADED"
+                limit 500;
             """)
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
@@ -204,7 +231,7 @@ class BulkDownloader:
                         l_img_content = Image.open(io.BytesIO(urllib.request.urlopen(l_src, timeout=20).read()))
                         if l_img_content.mode != 'RGB':
                             l_img_content = l_img_content.convert('RGB')
-                        l_img_content.save(os.path.join('./images_fb', l_img))
+                        # l_img_content.save(os.path.join('./images_fb', l_img))
 
                         l_outputBuffer = io.BytesIO()
                         l_img_content.save(l_outputBuffer, format=l_fmt)
@@ -247,45 +274,72 @@ class BulkDownloader:
                     self.m_logger.warning('Error updating TB_MEDIA: {0}'.format(repr(e)))
                     l_conn_write.rollback()
 
+                self.m_logger.info('Fetched image for internal ID: {0}'.format(l_internal))
+
                 l_cursor_write.close()
                 self.m_pool.putconn(l_conn_write)
 
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+    def repeat_ocr_image(self):
+        while True:
+            self.ocr_images()
+            time.sleep(30)
+
     def ocr_images(self):
+        # SQL Offset
+        l_offset = 0
+        l_max_img_count = 500
+        l_threshold = 180
+        l_order_range = 1
+        v = [.75, 1.5]
+        #v = [.75, 1.25, 1.5, 2.0]
+        l_enlarge_factor = 2
+        l_width = 6
+        l_clip = 2
+        l_img_path = './images_ocr'
+        l_debug_messages = False
+
         l_conn = self.m_pool.getconn('BulkDownloader.fetch_images()')
         l_cursor = l_conn.cursor()
         try:
             l_cursor.execute("""
                 select "ID_MEDIA_INTERNAL", "TX_BASE64" 
                 from "TB_MEDIA"
-                where "F_LOADED" and not "F_ERROR"
-                offset 500;
-            """)
+                where "F_LOADED" and not "F_ERROR" and not "F_OCR"
+                offset %s 
+                limit %s;
+            """, (l_offset, l_max_img_count))
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor.query))
 
         l_img_count = 0
+        l_suf_score = dict()
         for l_internal, l_base64 in l_cursor:
-            print('+++++++++++[{0}]++++++++++++++++++++++++++++++++++++++++++++++++++++++'.format(l_img_count))
+            if l_debug_messages:
+                print('+++++++++++[{0}]++++++++++++++++++++++++++++++++++++++++++++++++++++++'.format(l_img_count))
+            else:
+                os.system('rm -f {0}/*'.format(l_img_path))
+
             l_fileList = []
 
             def add_image(p_image, p_suffix):
-                l_file = 'images_ocr/img{0:03}_{1}.png'.format(l_img_count, p_suffix)
+                l_file = os.path.join(l_img_path, 'img{0:03}_{1}.png'.format(l_img_count, p_suffix))
                 p_image.save(l_file)
                 l_fileList.append(l_file)
                 return p_image
 
             #self.m_logger.info('Src: {0}'.format(l_src))
             l_raw = Image.open(io.BytesIO(base64.b64decode(l_base64)))
+            if l_raw.mode != 'RGB':
+                l_raw = l_raw.convert('RGB')
 
-            l_base = add_image(l_raw.resize((l_raw.width*3, l_raw.height*3)), 'base')
+            l_base = add_image(
+                l_raw.resize((int(l_raw.width*l_enlarge_factor), int(l_raw.height*l_enlarge_factor))), 'base')
             l_bw = add_image(ImageEnhance.Color(l_base).enhance(0.0), 'bw')
 
-            l_threshold = 180
-            v = [.70, .85, 1.25, 1.5]
-            for l_order in range(1):
+            for l_order in range(l_order_range):
                 for c1 in range(len(v)):
                     for c2 in range(len(v)):
                         p1 = v[c1]
@@ -295,33 +349,39 @@ class BulkDownloader:
                             continue
 
                         if l_order == 1:
-                            l_img_s1 = add_image(ImageEnhance.Brightness(l_bw).enhance(p1),
-                                                 'a{0}{1}{2}'.format(l_order, c1, c2))
-
-                            l_img_s2 = add_image(ImageEnhance.Contrast(l_img_s1).enhance(p2),
-                                                 'b{0}{1}{2}'.format(l_order, c1, c2))
-                        else:
                             l_img_s1 = add_image(ImageEnhance.Contrast(l_bw).enhance(p1),
                                                  'a{0}{1}{2}'.format(l_order, c1, c2))
-
                             l_img_s2 = add_image(ImageEnhance.Brightness(l_img_s1).enhance(p2),
                                                  'b{0}{1}{2}'.format(l_order, c1, c2))
+                        else:
+                            l_img_s1 = add_image(ImageEnhance.Brightness(l_bw).enhance(p1),
+                                                 'a{0}{1}{2}'.format(l_order, c1, c2))
+                            l_img_s2 = add_image(ImageEnhance.Contrast(l_img_s1).enhance(p2),
+                                                 'b{0}{1}{2}'.format(l_order, c1, c2))
 
-                        # bw = gray.point(lambda x: 0 if x<128 else 255, '1')
+                        l_img_s3 = add_image(l_img_s2.filter(ImageFilter.MedianFilter()),
+                                             'd{0}{1}{2}'.format(l_order, c1, c2))
+
                         add_image(l_img_s2.convert('L').point(lambda x: 0 if x<l_threshold else 255, '1'),
                                   'thr{0}{1}{2}'.format(l_order, c1, c2))
-
-                        # PIL.ImageOps.invert(image)
                         add_image(l_img_s2.convert('L').point(lambda x: 255 if x<l_threshold else 0, '1'),
                                   'inv{0}{1}{2}'.format(l_order, c1, c2))
 
+                        add_image(l_img_s3.convert('L').point(lambda x: 0 if x < l_threshold else 255, '1'),
+                                  'dthr{0}{1}{2}'.format(l_order, c1, c2))
+                        add_image(l_img_s3.convert('L').point(lambda x: 255 if x < l_threshold else 0, '1'),
+                                  'dinv{0}{1}{2}'.format(l_order, c1, c2))
+            # end for l_order in range(l_order_range):
+
             def get_resultList(p_fileList, p_api, p_lang):
-                print('get_resultList() p_lang: ' + p_lang)
+                if l_debug_messages:
+                    print('get_resultList() p_lang: ' + p_lang)
                 l_result_list = []
                 l_max_avg = 0
                 l_max_dict_ratio = 0
                 for l_file in p_fileList:
-                    print(l_file)
+                    if l_debug_messages:
+                        print(l_file)
                     p_api.SetImageFile(l_file)
 
                     l_txt = re.sub(r'\s+', r' ', p_api.GetUTF8Text()).strip()
@@ -344,23 +404,26 @@ class BulkDownloader:
                                         l_list_char.append(c)
                                 l_word = ''.join(l_list_char)
 
-                                l_full_alpha = False
-                                l_match = re.search(r'([a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[\.,;:\?!]*', l_word)
-                                if l_match:
-                                    l_full_alpha = (l_match.group(0) == l_word)
+                                l_full_alpha = re.match(r'(^[a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[\.,;:\?!]*$', l_word)
+                                # l_full_alpha = False
+                                # l_match = re.search(r'([a-zA-Z]+[\'’][a-zA-Z]+|[a-zA-Z]+)[\.,;:\?!]*', l_word)
+                                # if l_match:
+                                #     l_full_alpha = (l_match.group(0) == l_word)
 
-                                l_full_num = False
-                                l_match = re.search(r'([0-9]+[:,\.][0-9]+|[0-9]+)[\.,;:\?!]*', l_word)
-                                if l_match:
-                                    l_full_num = (l_match.group(0) == l_word)
+                                l_full_num = re.match(r'(^[0-9]+[:,\.][0-9]+|[0-9]+)[\.,;:\?!]*$', l_word)
+                                # l_full_num = False
+                                # l_match = re.search(r'([0-9]+[:,\.][0-9]+|[0-9]+)[\.,;:\?!]*', l_word)
+                                # if l_match:
+                                #     l_full_num = (l_match.group(0) == l_word)
 
-                                print('{5} {0:.2f} {1} {2} {3} {4}'.format(
-                                    l_conf,
-                                    'D' if l_dict else ' ',
-                                    'A' if l_full_alpha else ' ',
-                                    'N' if l_full_num else ' ',
-                                    l_word,
-                                    p_lang))
+                                if l_debug_messages:
+                                    print('{5} {0:.2f} {1} {2} {3} {4}'.format(
+                                        l_conf,
+                                        'D' if l_dict else ' ',
+                                        'A' if l_full_alpha else ' ',
+                                        'N' if l_full_num else ' ',
+                                        l_word,
+                                        p_lang))
 
                                 l_raw_list.append((l_word, int(l_conf), l_dict))
                                 if (l_full_num or l_full_alpha) and len(l_word) > 0:
@@ -369,7 +432,8 @@ class BulkDownloader:
                                         l_more_3.append(l_dict)
 
                             except Exception as e:
-                                print(repr(e))
+                                if l_debug_messages:
+                                    print(repr(e))
                                 break
                             if not ri.Next(RIL.WORD):
                                 break
@@ -385,8 +449,9 @@ class BulkDownloader:
                         else:
                             l_dict_ratio = 0.0
 
-                        print('Average Confidence : {0:.2f}'.format(l_avg))
-                        print('Dictionary ratio   : {0:.2f}'.format(l_dict_ratio))
+                        if l_debug_messages:
+                            print('Average Confidence : {0:.2f}'.format(l_avg))
+                            print('Dictionary ratio   : {0:.2f}'.format(l_dict_ratio))
                         if l_avg < 75.0:
                             continue
 
@@ -402,46 +467,49 @@ class BulkDownloader:
                     l_avg_dict_ratio = sum([l[1] for l in l_result_list])/float(len(l_result_list))
                 else:
                     l_avg_dict_ratio = 0.0
-                print(
-                    '[{3}] {0} results, max avg: {1:.2f}, max dict. ratio {2:.2f}, avg. dict. ratio {4:.2f}'.format(
-                    len(l_result_list), l_max_avg, l_max_dict_ratio, p_lang, l_avg_dict_ratio))
+                if l_debug_messages:
+                    print(
+                        ('[{3}] {0} results, max avg: {1:.2f}, max dict. ' +
+                         'ratio {2:.2f}, avg. dict. ratio {4:.2f}').format(
+                        len(l_result_list), l_max_avg, l_max_dict_ratio, p_lang, l_avg_dict_ratio))
                 return l_result_list, l_max_avg, l_max_dict_ratio, l_avg_dict_ratio
+            # end def get_resultList(p_fileList, p_api, p_lang):
 
             def display_results(p_result_list, p_lang):
-                print('-----[{0} / {1}]-------------------------------------------------'.format(l_img_count, p_lang))
+                if l_debug_messages:
+                    print('-----[{0} / {1}]----------------------------------------------'.format(l_img_count, p_lang))
                 p_result_list.sort(key=lambda l_tuple: l_tuple[0])
                 for l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list in p_result_list:
-                    print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
-                for l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list in p_result_list:
-                    l_file = re.sub(r'images_ocr/base', '', l_file)
+                    l_file = re.sub(r'{0}/img\d+_'.format(l_img_path), '', l_file)
                     l_file = re.sub(r'\.png', '', l_file)
-                    print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
-                    print('     {0}'.format(l_list))
-                    print('     {0}'.format(l_raw_list))
+                    if l_debug_messages:
+                        print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
+                for l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list in p_result_list:
+                    l_file = re.sub(r'{0}/img\d+_'.format(l_img_path), '', l_file)
+                    l_file = re.sub(r'\.png', '', l_file)
+                    if l_debug_messages:
+                        print('{1:.2f} "{2}" [{0}]'.format(l_file, l_avg, l_txt))
+                        print('     {0}'.format(l_list))
+                        print('     {0}'.format(l_raw_list))
 
+            # OCR - eng
             with PyTessBaseAPI(lang='eng') as l_api_eng:
-                # api.SetVariable('user_words_suffix', 'user-words')
-                # api.InitFull(lang='joh', variables={'user_words_suffix': 'user-words'})
-                # print('textord_skewsmooth_offset2 : {0}'.format(api.GetVariableAsString('textord_skewsmooth_offset2')))
-                # print('load_system_dawg           : {0}'.format(api.GetVariableAsString('load_system_dawg')))
-                # print('user_words_suffix          : {0}'.format(api.GetVariableAsString('user_words_suffix')))
-                # print('GetLoadedLanguages         : {0}'.format(api.GetLoadedLanguages()))
-
-                l_result_list0, l_max_avg0, l_max_dict_ratio0, l_avg_dict_ratio0 = \
+                l_result_list_eng, l_max_avg_eng, l_max_dict_ratio_eng, l_avg_dict_ratio_eng = \
                     get_resultList(l_fileList, l_api_eng, 'eng')
-                if len(l_result_list0) > 0:
-                    display_results(l_result_list0, 'eng')
-                # if len(l_result_list) > 0 and l_max_avg > 75.0 and l_max_dict_ratio > .6:
-                # else:
+                if len(l_result_list_eng) > 0:
+                    display_results(l_result_list_eng, 'eng')
+
+            # OCR - joh
             with PyTessBaseAPI(lang='joh') as l_api_joh:
-                l_result_list1, l_max_avg1, l_max_dict_ratio1, l_avg_dict_ratio1 = \
+                l_result_list_joh, l_max_avg_joh, l_max_dict_ratio_joh, l_avg_dict_ratio_joh = \
                     get_resultList(l_fileList, l_api_joh, 'joh')
-                if len(l_result_list1) > 0:
-                    display_results(l_result_list1, 'joh')
+                if len(l_result_list_joh) > 0:
+                    display_results(l_result_list_joh, 'joh')
 
             def select_final_version(p_result_list):
-                l_width = 5
-                l_clip = 2
+                l_txt = ''
+                l_vocabulary = []
+
                 l_min_select = len(p_result_list) -1 -l_clip -l_width
                 l_max_select = len(p_result_list) -1 -l_clip
 
@@ -450,39 +518,131 @@ class BulkDownloader:
                 if l_max_select < 0:
                     l_max_select = len(p_result_list) -1
 
+                # calculate max length of result list (within selection bracket)
                 l_max_len = 0
                 for i in range(l_min_select, l_max_select+1):
                     l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list = p_result_list[i]
                     if len(l_list) > l_max_len:
                         l_max_len = len(l_list)
 
+                    l_file = re.sub(r'images_ocr/img\d+_', '', l_file)
+                    l_suf = re.sub(r'\.png', '', l_file)
+
+                    if len(p_result_list) > l_clip + l_width:
+                        if l_suf in l_suf_score.keys():
+                            l_suf_score[l_suf] += 1
+                        else:
+                            l_suf_score[l_suf] = 1
+
+                    for l_word, _, _ in l_list:
+                        l_word = re.sub('[\.,;:\?!]*$', '', l_word)
+                        if l_word not in l_vocabulary:
+                            l_vocabulary.append(l_word)
+
+                # select the longest (within selection bracket)
                 for i in range(l_min_select, l_max_select+1):
                     l_avg, l_dict_ratio, l_txt, l_file, l_list, l_raw_list = p_result_list[i]
                     if len(l_list) == l_max_len:
-                        return l_txt
+                        break
 
-                return ''
+                # print('l_vocabulary:', l_vocabulary, file=sys.stderr)
+                return l_txt, l_vocabulary
+            # end def select_final_version(p_result_list):
 
-            print('======[{0}]==================================================='.format(l_img_count))
-            if l_max_avg0 < l_max_avg1 and l_avg_dict_ratio0 < l_avg_dict_ratio1:
-                print('RESULT (joh):', select_final_version(l_result_list1))
-                print('[{0}] RESULT (joh):'.format(l_img_count), select_final_version(l_result_list1), file=sys.stderr)
-            elif l_max_avg1 < l_max_avg0 and l_avg_dict_ratio1 < l_avg_dict_ratio0:
-                print('RESULT (eng):', select_final_version(l_result_list0))
-                print('[{0}] RESULT (eng):'.format(l_img_count), select_final_version(l_result_list0), file=sys.stderr)
+            l_text = ''
+            if l_debug_messages:
+                print('======[{0}]==================================================='.format(l_img_count))
+            if l_max_avg_eng < l_max_avg_joh and l_avg_dict_ratio_eng < l_avg_dict_ratio_joh:
+                l_text, l_vocabulary = select_final_version(l_result_list_joh)
+                if l_debug_messages:
+                    print('RESULT (joh):', l_text)
+                    print('[{0}] RESULT (joh):'.format(l_img_count), l_text, file=sys.stderr)
+            elif l_max_avg_joh < l_max_avg_eng and l_avg_dict_ratio_joh < l_avg_dict_ratio_eng:
+                l_text, l_vocabulary = select_final_version(l_result_list_eng)
+                if l_debug_messages:
+                    print('RESULT (eng):', l_text)
+                    print('[{0}] RESULT (eng):'.format(l_img_count), l_text, file=sys.stderr)
             else:
-                l_txt_eng = select_final_version(l_result_list0)
-                l_txt_joh = select_final_version(l_result_list1)
+                l_txt_eng, l_vocabulary_eng = select_final_version(l_result_list_eng)
+                l_txt_joh, l_vocabulary_joh = select_final_version(l_result_list_joh)
+
+                # merge vocabularies
+                l_vocabulary = l_vocabulary_eng
+                for l_word in l_vocabulary_joh:
+                    if l_word not in l_vocabulary:
+                        l_vocabulary.append(l_word)
+
                 if len(l_txt_eng) > len(l_txt_joh):
-                    print('RESULT (Undecided/eng):', l_txt_eng)
-                    print('[{0}] RESULT (Undecided/eng):'.format(l_img_count), l_txt_eng)
-                else:
-                    print('RESULT (Undecided/joh):', l_txt_joh)
-                    print('[{0}] RESULT (Undecided/joh):'.format(l_img_count), l_txt_joh)
+                    if l_debug_messages:
+                        print('RESULT (Undecided/eng):', l_txt_eng)
+                        print('[{0}] RESULT (Undecided/eng):'.format(l_img_count), l_txt_eng, file=sys.stderr)
+                    l_text = l_txt_eng
+                elif len(l_txt_joh) > 0:
+                    if l_debug_messages:
+                        print('RESULT (Undecided/joh):', l_txt_joh)
+                        print('[{0}] RESULT (Undecided/joh):'.format(l_img_count), l_txt_joh, file=sys.stderr)
+                    l_text = l_txt_joh
+
+            if len(l_vocabulary) > 0:
+                if l_debug_messages:
+                    print('VOCABULARY:', ' '.join(l_vocabulary))
+                    print('[{0}] VOCABULARY:'.format(l_img_count), ' '.join(l_vocabulary), file=sys.stderr)
+
+                l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images() UPDATE')
+                l_cursor_write = l_conn_write.cursor()
+
+                self.m_logger.info('OCR complete on [{0}]: {1}'.format(l_internal, l_text))
+                try:
+                    l_cursor_write.execute("""
+                        update "TB_MEDIA"
+                        set 
+                            "F_OCR" = true
+                            , "TX_TEXT" = %s
+                            , "TX_VOCABULARY" = %s
+                        where "ID_MEDIA_INTERNAL" = %s
+                    """, (l_text, ' '.join(l_vocabulary), l_internal))
+                    l_conn_write.commit()
+                except Exception as e:
+                    l_conn_write.rollback()
+                    self.m_logger.warning('Error updating TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query))
+
+                l_cursor_write.close()
+                self.m_pool.putconn(l_conn_write)
+            else:
+                l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images() UPDATE')
+                l_cursor_write = l_conn_write.cursor()
+
+                try:
+                    l_cursor_write.execute("""
+                        update "TB_MEDIA"
+                        set 
+                            "F_OCR" = true
+                        where "ID_MEDIA_INTERNAL" = %s
+                    """, (l_internal, ))
+                    l_conn_write.commit()
+                except Exception as e:
+                    l_conn_write.rollback()
+                    self.m_logger.warning('Error updating TB_MEDIA: {0}/{1}'.format(repr(e), l_cursor_write.query))
+
+                l_cursor_write.close()
+                self.m_pool.putconn(l_conn_write)
 
             l_img_count += 1
-            if l_img_count == 300:
+            if l_img_count == l_max_img_count:
                 break
+        # end for l_internal, l_base64 in l_cursor:
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
+
+        # final results
+        if l_debug_messages:
+            print('&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&')
+            l_suf_list = list(l_suf_score.items())
+            l_suf_list.sort(key=lambda l_tuple: l_tuple[1])
+            print(l_suf_list)
+            for l_suf, l_count in l_suf_list:
+                print('{0:4} {1}'.format(l_count, l_suf))
 
     # calls Facebook's HTTP API and traps errors if any
     def performRequest(self, p_request):
@@ -806,12 +966,45 @@ class BulkDownloader:
             raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
-
         self.m_pool.putconn(l_conn)
 
         self.m_logger.info(
             '{0}Object counts: {1} attempts / {2} stored / {3} posts retrieved / {4} comments retrieved'.format(
             p_padding, self.m_objectStoreAttempts, self.m_objectStored, self.m_postRetrieved, self.m_commentRetrieved))
+
+        return l_stored
+
+    def updateObject(self, p_id, p_shareCount, p_likeCount, p_name, p_caption, p_desc, p_story, p_message):
+        l_stored = False
+
+        l_conn = self.m_pool.getconn('BulkDownloader.updateObject()')
+        l_cursor = l_conn.cursor()
+
+        try:
+            l_cursor.execute("""
+                UPDATE "TB_OBJ"
+                SET
+                    "N_LIKES" = %s
+                    ,"N_SHARES" = %s
+                    ,"TX_NAME" = %s
+                    ,"TX_CAPTION" = %s
+                    ,"TX_DESCRIPTION" = %s
+                    ,"TX_STORY" = %s
+                    ,"TX_MESSAGE" = %s
+                    ,"DT_LAST_UPDATE" = CURRENT_TIMESTAMP
+                WHERE "ID" = '%s
+            """, (p_likeCount, p_shareCount, p_name, p_caption, p_desc, p_story, p_message, p_id))
+            l_conn.commit()
+            l_stored = True
+        except psycopg2.IntegrityError as e:
+            self.m_logger.warning('Object Cannot be updated: {0}/{1}'.format(repr(e), l_cursor.query))
+            l_conn.rollback()
+        except Exception as e:
+            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
 
         return l_stored
 
@@ -845,8 +1038,76 @@ class BulkDownloader:
             # print('{0}PostgreSQL: {1}'.format(p_padding, e))
             l_conn.rollback()
         except Exception as e:
-            self.m_logger.warning('TB_USER Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            self.m_logger.critical('TB_USER Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
             raise BulkDownloaderException('TB_USER Unknown Exception: {0}'.format(repr(e)))
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
+
+    def getUserInternalId(self, p_id):
+        l_conn = self.m_pool.getconn('BulkDownloader.getUserInternalId()')
+        l_cursor = l_conn.cursor()
+
+        l_retId = None
+        try:
+            l_cursor.execute("""
+                select "ID_INTERNAL"
+                from "TB_USER"
+                where "ID" = %s
+            """, (p_id, ))
+
+            for l_internalId, in l_cursor:
+                l_retId = l_internalId
+
+        except Exception as e:
+            self.m_logger.critical('TB_USER Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('TB_USER Unknown Exception: {0}'.format(repr(e)))
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
+
+        return l_retId
+
+    def createLikeLink(self, p_userIdInternal, p_objIdInternal, p_date):
+        # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
+        l_date = re.sub('T', ' ', p_date)
+        l_date = re.sub(r'\+\d+$', '', l_date)
+
+        l_conn = self.m_pool.getconn('BulkDownloader.creatLikeLink()')
+        l_cursor = l_conn.cursor()
+
+        try:
+            l_cursor.execute("""
+                INSERT INTO "TB_LIKE"("ID_USER_INTERNAL","ID_OBJ_INTERNAL","DT_CRE")
+                VALUES( %s, %s, %s )
+            """.format(p_userIdInternal, p_objIdInternal, l_date))
+            l_conn.commit()
+        except psycopg2.IntegrityError:
+            l_conn.rollback()
+            if EcAppParam.gcm_verboseModeOn:
+                self.m_logger.info('Like link already exists')
+        except Exception as e:
+            self.m_logger.critical('TB_LIKE Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('TB_LIKE Unknown Exception: {0}'.format(repr(e)))
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
+
+    def setLikeFlag(self, p_id):
+        l_conn = self.m_pool.getconn('BulkDownloader.setLikeFlag()')
+        l_cursor = l_conn.cursor()
+
+        try:
+            l_cursor.execute("""
+                update "TB_OBJ"
+                set "F_LIKE_DETAIL" = 'X'
+                where "ID" = %s
+            """.format(p_id))
+            l_conn.commit()
+        except Exception as e:
+            l_conn.rollback()
+            self.m_logger.critical('TB_OBJ Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('TB_OBJ Unknown Exception: {0}'.format(repr(e)))
 
         l_cursor.close()
         self.m_pool.putconn(l_conn)
@@ -1240,6 +1501,186 @@ class BulkDownloader:
                 break
 
         self.m_logger.info('{0}comment download count --> {1}'.format(l_depthPadding[:-3], l_commCount))
+
+    def updatePosts(self):
+        l_conn = self.m_pool.getconn('BulkDownloader.updatePosts()')
+        l_cursor = l_conn.cursor()
+
+        # All posts not older than G_DAYS_DEPTH days and not already updated in the last day
+        # Among these, comments to be downloaded only for those which were not created today
+        # ("DT_LAST_UPDATE" not null)
+
+        try:
+            l_cursor.execute("""
+                select
+                    "ID"
+                    , "ID_PAGE"
+                    , case when "DT_LAST_UPDATE" is null then '' else 'X' end "COMMENT_DOWNLOAD"
+                from "TB_OBJ"
+                where
+                    "ST_TYPE" = 'Post'
+                    and DATE_PART('day', now()::date - "DT_CRE") <= %s
+                    and (
+                        "DT_LAST_UPDATE" is null
+                        or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 2
+                    )
+            """, (EcAppParam.gcm_days_depth))
+
+            for l_postId, l_pageId, l_commentFlag in l_cursor:
+                self.m_postRetrieved += 1
+                # get post data
+                l_fieldList = 'id,created_time,from,story,message,' + \
+                              'caption,description,icon,link,name,object_id,picture,place,shares,source,type'
+
+                l_request = ('https://graph.facebook.com/{0}/{1}?limit={2}&' +
+                             'access_token={3}&fields={4}').format(
+                    EcAppParam.gcm_api_version,
+                    l_postId,
+                    EcAppParam.gcm_limit,
+                    self.m_browserDriver.m_token_api,
+                    l_fieldList)
+
+                # print('   l_request:', l_request)
+                l_response = self.performRequest(l_request)
+
+                l_responseData = json.loads(l_response)
+                l_shares = int(l_responseData['shares']['count']) if 'shares' in l_responseData.keys() else 0
+                self.m_logger.info('============= UPDATE ==============================================')
+                self.m_logger.info('Post ID     :', l_postId)
+                if 'created_time' in l_responseData.keys():
+                    self.m_logger.info('Post date   :', l_responseData['created_time'])
+                    self.m_logger.info('Comm. dnl ? :', l_commentFlag)
+
+                l_name, l_nameShort = BulkDownloader.getOptionalField(l_responseData, 'name')
+                l_caption, l_captionShort = BulkDownloader.getOptionalField(l_responseData, 'caption')
+                l_description, l_descriptionSh = BulkDownloader.getOptionalField(l_responseData, 'description')
+                l_story, l_storyShort = BulkDownloader.getOptionalField(l_responseData, 'story')
+                l_message, l_messageShort = BulkDownloader.getOptionalField(l_responseData, 'message')
+
+                self.m_logger.info('name        :', l_nameShort)
+                if EcAppParam.gcm_verboseModeOn:
+                    self.m_logger.info('caption     :', l_captionShort)
+                    self.m_logger.info('description :', l_descriptionSh)
+                    self.m_logger.info('story       :', l_storyShort)
+                    self.m_logger.info('message     :', l_messageShort)
+                    self.m_logger.info('shares      :', l_shares)
+
+                # get post likes
+                l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
+                             'access_token={3}&summary=true').format(
+                    EcAppParam.gcm_api_version, l_postId, 25, self.m_browserDriver.m_token_api, l_fieldList)
+                # print('   l_request:', l_request)
+                l_response = self.performRequest(l_request)
+
+                l_responseData = json.loads(l_response)
+                l_likeCount = 0
+                if 'summary' in l_responseData.keys():
+                    l_likeCount = int(l_responseData['summary']['total_count'])
+                if EcAppParam.gcm_verboseModeOn:
+                    self.m_logger.info('likes       :', l_likeCount)
+
+                if self.updateObject(
+                        l_postId, l_shares, l_likeCount, l_name, l_caption, l_description, l_story, l_message) \
+                        and l_commentFlag == 'X':
+                    self.getComments(l_postId, l_postId, l_pageId, 0)
+
+        except Exception as e:
+            self.m_logger.critical('Post Update Unknown Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('Post Update Unknown Exception: {0}'.format(repr(e)))
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
+
+    def getLikesDetail(self):
+        l_conn = self.m_pool.getconn('BulkDownloader.getLikesDetail()')
+        l_cursor = l_conn.cursor()
+
+        l_totalCount = 0
+        try:
+            l_cursor.execute("""
+                SELECT
+                    count(1) AS "LCOUNT"
+                FROM
+                    "FBWatch"."TB_OBJ"
+                WHERE
+                    "ST_TYPE" != 'Page'
+                    AND DATE_PART('day', now()::date - "DT_CRE") >= %s
+                    AND "F_LIKE_DETAIL" is null
+            """, (EcAppParam.gcm_likes_depth, ))
+
+            for l_count, in l_cursor:
+                l_totalCount = l_count
+        except Exception as e:
+            self.m_logger.critical('Likes detail download (count) Unknown Exception: {0}/{1}'.format(
+                repr(e), l_cursor.query))
+            raise BulkDownloaderException('Likes detail download (count) Unknown Exception: {0}'.format(repr(e)))
+
+        l_cursor.close()
+        l_cursor = l_conn.cursor()
+
+        # all non page objects older than G_LIKES_DEPTH days and not already processed
+        l_objCount = 0
+        try:
+            l_cursor.execute("""
+                SELECT
+                    "ID", "ID_INTERNAL", "DT_CRE"
+                FROM
+                    "FBWatch"."TB_OBJ"
+                WHERE
+                    "ST_TYPE" != 'Page'
+                    AND DATE_PART('day', now()::date - "DT_CRE") >= {0}
+                    AND "F_LIKE_DETAIL" is null
+            """, (EcAppParam.gcm_likes_depth, ))
+
+            for l_id, l_internalId, l_dtMsg in l_cursor:
+                print('{0}/{1}'.format(l_objCount, l_totalCount), l_id, '--->')
+                # get likes data
+
+                l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
+                             'access_token={3}').format(
+                    EcAppParam.gcm_api_version, l_id, EcAppParam.gcm_limit, self.m_browserDriver.m_token_api)
+                l_response = self.performRequest(l_request)
+
+                l_responseData = json.loads(l_response)
+                l_likeCount = 0
+                while True:
+                    for l_liker in l_responseData['data']:
+                        l_likerId = l_liker['id']
+                        l_likerName = l_liker['name']
+
+                        l_dtMsgStr = l_dtMsg.strftime('%Y-%m-%dT%H:%M:%S+000')
+
+                        self.storeUser(l_likerId, l_likerName, l_dtMsgStr, '')
+
+                        l_likerInternalId = self.getUserInternalId(l_likerId)
+
+                        self.createLikeLink(l_likerInternalId, l_internalId, l_dtMsgStr)
+
+                        if EcAppParam.gcm_verboseModeOn:
+                            self.m_logger.info('   {0}/{1} [{2} | {3}] {4}'.format(
+                                l_objCount, l_totalCount, l_likerId, l_likerInternalId, l_likerName))
+
+                        l_likeCount += 1
+
+                    if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
+                        self.m_logger.info('   *** {0}/{1} Getting next likes block ...'.format(l_objCount, l_totalCount))
+                        l_request = l_responseData['paging']['next']
+                        l_response = self.performRequest(l_request)
+
+                        l_responseData = json.loads(l_response)
+                    else:
+                        break
+
+                self.setLikeFlag(l_id)
+                self.m_logger.info('   {0}/{1} --> {2} Likes:'.format(l_objCount, l_totalCount, l_likeCount))
+                l_objCount += 1
+
+        except Exception as e:
+            self.m_logger.critical('Likes detail download Exception: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise BulkDownloaderException('Likes detail download Exception: {0}'.format(repr(e)))
+
+        l_cursor.close()
+        self.m_pool.putconn(l_conn)
 
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":
