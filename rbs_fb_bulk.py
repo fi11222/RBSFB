@@ -143,11 +143,11 @@ class BulkDownloader:
         t1.start()
         self.m_logger.info('Image fetch thread launched')
 
-        self.getPages()
-        self.get_posts()
+        # self.getPages()
+        # self.get_posts()
         self.updatePosts()
         self.getLikesDetail()
-        
+
         self.m_fetch_proceed = False
 
         t1.join()
@@ -184,7 +184,7 @@ class BulkDownloader:
             l_cursor.execute("""
                 select "TX_MEDIA_SRC", "N_WIDTH", "N_HEIGHT", "ID_MEDIA_INTERNAL" 
                 from "TB_MEDIA"
-                where "TX_MEDIA_SRC" is not NULL and not "F_LOADED"
+                where "TX_MEDIA_SRC" is not NULL and not "F_LOADED" and not "F_ERROR"
                 limit 500;
             """)
         except Exception as e:
@@ -193,92 +193,99 @@ class BulkDownloader:
         for l_src, l_width, l_height, l_internal in l_cursor:
             self.m_logger.info('Src: {0}'.format(l_src))
 
-            l_img = None
-            l_fmt = None
-            l_match = re.search(r'/([^/]+_([no])\.(png|jpg|gif))\?', l_src)
+            l_match = re.search(r'/([^/]+_[no]\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))', l_src)
             if l_match:
                 l_img = l_match.group(1)
-                l_fmt = l_match.group(3)
+                l_fmt = l_match.group(2)
             else:
-                l_match = re.search(r'url=([^&]+\.(png|jpg|gif))[&%]', l_src)
+                l_match = re.search(r'url=([^&]+\.(png|jpg|jpeg|gif|svg|PNG|JPG|JPEG|GIF|SVG))[&%]', l_src)
                 if l_match:
                     l_img = (urllib.parse.unquote(l_match.group(1))).split('/')[-1]
                     l_fmt = l_match.group(2)
                 else:
                     self.m_logger.warning('Image not found in:' + l_src)
+                    l_img = '__RBSFB_IMG__{0}'.format(l_internal)
+                    l_fmt = ''
 
-            if l_img is not None:
-                l_fmt = 'jpeg' if l_fmt.lower() == 'jpg' else l_fmt
-                if len(l_img) > 200:
-                    l_img = l_img[-200:]
-                self.m_logger.info('   -->: [{0}] {1}'.format(l_fmt, l_img))
+            l_fmt = l_fmt.lower()
+            l_fmt = 'jpeg' if l_fmt == 'jpg' else l_fmt
 
-                l_attempts = 0
-                l_error = False
-                while True:
-                    l_attempts += 1
-                    if l_attempts > 10:
-                        if self.m_browserDriver.internet_check():
-                            l_msg = 'Cannot download image [{0}] Too many failed attempts'.format(l_img)
-                            self.m_logger.warning(l_msg)
-                            raise BulkDownloaderException(l_msg)
-                        else:
-                            self.m_logger.info('Internet Down. Waiting ...')
-                            time.sleep(5 * 60)
-                            l_attempts = 0
+            if len(l_img) > 200:
+                l_img = l_img[-200:]
 
-                    try:
-                        l_img_content = Image.open(io.BytesIO(urllib.request.urlopen(l_src, timeout=20).read()))
-                        if l_img_content.mode != 'RGB':
-                            l_img_content = l_img_content.convert('RGB')
-                        # l_img_content.save(os.path.join('./images_fb', l_img))
+            l_attempts = 0
+            l_error = False
+            while True:
+                l_attempts += 1
+                if l_attempts > 10:
+                    if self.m_browserDriver.internet_check():
+                        l_msg = 'Cannot download image [{0}] Too many failed attempts'.format(l_img)
+                        self.m_logger.warning(l_msg)
+                        raise BulkDownloaderException(l_msg)
+                    else:
+                        self.m_logger.info('Internet Down. Waiting ...')
+                        time.sleep(5 * 60)
+                        l_attempts = 0
 
-                        l_outputBuffer = io.BytesIO()
-                        l_img_content.save(l_outputBuffer, format=l_fmt)
-                        l_image_txt = base64.b64encode(l_outputBuffer.getvalue()).decode()
-                        self.m_logger.info('[{0}] {1}'.format(len(l_image_txt), l_image_txt[:100]))
-                        break
-                    except urllib.error.URLError as e:
-                        if re.search(r'HTTPError 404', repr(e)):
-                            self.m_logger.warning('Trapped urllib.error.URLError/HTTPError 404: ' + repr(e))
-                            l_image_txt = repr(e)
-                            l_error = True
-                            break
-                        else:
-                            self.m_logger.info('Trapped urllib.error.URLError: ' + repr(e))
-                            continue
-                    except socket.timeout as e:
-                        self.m_logger.info('Trapped socket.timeout: ' + repr(e))
-                        continue
-                    except TypeError as e:
-                        self.m_logger.warning('Trapped TypeError (probably pillow  UserWarning: Couldn\'t ' +
-                                              ' allocate palette entry for transparency): ' + repr(e))
+                try:
+                    l_img_content = Image.open(io.BytesIO(urllib.request.urlopen(l_src, timeout=20).read()))
+                    if l_img_content.mode != 'RGB':
+                        l_img_content = l_img_content.convert('RGB')
+
+                    if len(l_fmt) == 0:
+                        l_fmt = l_img_content.format
+                        l_img += '.' + l_fmt
+
+                    self.m_logger.info('   -->: [{0}] {1}'.format(l_fmt, l_img))
+
+                    # l_img_content.save(os.path.join('./images_fb', l_img))
+
+                    l_outputBuffer = io.BytesIO()
+                    l_img_content.save(l_outputBuffer, format=l_fmt)
+                    l_image_txt = base64.b64encode(l_outputBuffer.getvalue()).decode()
+                    self.m_logger.info('[{0}] {1}'.format(len(l_image_txt), l_image_txt[:100]))
+                    break
+                except urllib.error.URLError as e:
+                    if re.search(r'HTTPError 404', repr(e)):
+                        self.m_logger.warning('Trapped urllib.error.URLError/HTTPError 404: ' + repr(e))
                         l_image_txt = repr(e)
                         l_error = True
                         break
-                    except Exception as e:
-                        self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
-                        raise
-
-                l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images()')
-                l_cursor_write = l_conn_write.cursor()
-
-                try:
-                    l_cursor_write.execute("""
-                        update "TB_MEDIA"
-                        set "F_LOADED" = true, "TX_BASE64" = %s, "F_ERROR" = %s
-                        where "ID_MEDIA_INTERNAL" = %s;
-                    """, (l_image_txt, l_error, l_internal))
-                    l_conn_write.commit()
+                    else:
+                        self.m_logger.info('Trapped urllib.error.URLError: ' + repr(e))
+                        continue
+                except socket.timeout as e:
+                    self.m_logger.info('Trapped socket.timeout: ' + repr(e))
+                    continue
+                except TypeError as e:
+                    self.m_logger.warning('Trapped TypeError (probably pillow  UserWarning: Couldn\'t ' +
+                                          ' allocate palette entry for transparency): ' + repr(e))
+                    l_image_txt = repr(e)
+                    l_error = True
+                    break
                 except Exception as e:
-                    self.m_logger.warning('Error updating TB_MEDIA: {0}'.format(repr(e)))
-                    l_conn_write.rollback()
+                    self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
+                    raise
 
-                self.m_logger.info('Fetched image for internal ID: {0}'.format(l_internal))
+            l_conn_write = self.m_pool.getconn('BulkDownloader.fetch_images()')
+            l_cursor_write = l_conn_write.cursor()
 
-                l_cursor_write.close()
-                self.m_pool.putconn(l_conn_write)
+            try:
+                l_cursor_write.execute("""
+                    update "TB_MEDIA"
+                    set "F_LOADED" = true, "TX_BASE64" = %s, "F_ERROR" = %s
+                    where "ID_MEDIA_INTERNAL" = %s;
+                """, (l_image_txt, l_error, l_internal))
+                l_conn_write.commit()
+            except Exception as e:
+                self.m_logger.warning('Error updating TB_MEDIA: {0}'.format(repr(e)))
+                l_conn_write.rollback()
 
+            self.m_logger.info('Fetched image for internal ID: {0}'.format(l_internal))
+
+            l_cursor_write.close()
+            self.m_pool.putconn(l_conn_write)
+            # end if l_img is not None:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
@@ -992,7 +999,7 @@ class BulkDownloader:
                     ,"TX_STORY" = %s
                     ,"TX_MESSAGE" = %s
                     ,"DT_LAST_UPDATE" = CURRENT_TIMESTAMP
-                WHERE "ID" = '%s
+                WHERE "ID" = %s
             """, (p_likeCount, p_shareCount, p_name, p_caption, p_desc, p_story, p_message, p_id))
             l_conn.commit()
             l_stored = True
@@ -1080,7 +1087,7 @@ class BulkDownloader:
             l_cursor.execute("""
                 INSERT INTO "TB_LIKE"("ID_USER_INTERNAL","ID_OBJ_INTERNAL","DT_CRE")
                 VALUES( %s, %s, %s )
-            """.format(p_userIdInternal, p_objIdInternal, l_date))
+            """, (p_userIdInternal, p_objIdInternal, l_date))
             l_conn.commit()
         except psycopg2.IntegrityError:
             l_conn.rollback()
@@ -1102,7 +1109,7 @@ class BulkDownloader:
                 update "TB_OBJ"
                 set "F_LIKE_DETAIL" = 'X'
                 where "ID" = %s
-            """.format(p_id))
+            """, (p_id,))
             l_conn.commit()
         except Exception as e:
             l_conn.rollback()
@@ -1524,7 +1531,7 @@ class BulkDownloader:
                         "DT_LAST_UPDATE" is null
                         or DATE_PART('day', now()::date - "DT_LAST_UPDATE") >= 2
                     )
-            """, (EcAppParam.gcm_days_depth))
+            """, (EcAppParam.gcm_days_depth, ))
 
             for l_postId, l_pageId, l_commentFlag in l_cursor:
                 self.m_postRetrieved += 1
@@ -1546,10 +1553,10 @@ class BulkDownloader:
                 l_responseData = json.loads(l_response)
                 l_shares = int(l_responseData['shares']['count']) if 'shares' in l_responseData.keys() else 0
                 self.m_logger.info('============= UPDATE ==============================================')
-                self.m_logger.info('Post ID     :', l_postId)
+                self.m_logger.info('Post ID     : {0}'.format(l_postId))
                 if 'created_time' in l_responseData.keys():
-                    self.m_logger.info('Post date   :', l_responseData['created_time'])
-                    self.m_logger.info('Comm. dnl ? :', l_commentFlag)
+                    self.m_logger.info('Post date   : {0}'.format(l_responseData['created_time']))
+                    self.m_logger.info('Comm. dnl ? : {0}'.format(l_commentFlag))
 
                 l_name, l_nameShort = BulkDownloader.getOptionalField(l_responseData, 'name')
                 l_caption, l_captionShort = BulkDownloader.getOptionalField(l_responseData, 'caption')
@@ -1557,13 +1564,13 @@ class BulkDownloader:
                 l_story, l_storyShort = BulkDownloader.getOptionalField(l_responseData, 'story')
                 l_message, l_messageShort = BulkDownloader.getOptionalField(l_responseData, 'message')
 
-                self.m_logger.info('name        :', l_nameShort)
+                self.m_logger.info('name        : {0}'.format(l_nameShort))
                 if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('caption     :', l_captionShort)
-                    self.m_logger.info('description :', l_descriptionSh)
-                    self.m_logger.info('story       :', l_storyShort)
-                    self.m_logger.info('message     :', l_messageShort)
-                    self.m_logger.info('shares      :', l_shares)
+                    self.m_logger.info('caption     : {0}'.format(l_captionShort))
+                    self.m_logger.info('description : {0}'.format(l_descriptionSh))
+                    self.m_logger.info('story       : {0}'.format(l_storyShort))
+                    self.m_logger.info('message     : {0}'.format(l_messageShort))
+                    self.m_logger.info('shares      : {0}'.format(l_shares))
 
                 # get post likes
                 l_request = ('https://graph.facebook.com/{0}/{1}/likes?limit={2}&' +
@@ -1577,7 +1584,7 @@ class BulkDownloader:
                 if 'summary' in l_responseData.keys():
                     l_likeCount = int(l_responseData['summary']['total_count'])
                 if EcAppParam.gcm_verboseModeOn:
-                    self.m_logger.info('likes       :', l_likeCount)
+                    self.m_logger.info('likes       : {0}'.format(l_likeCount))
 
                 if self.updateObject(
                         l_postId, l_shares, l_likeCount, l_name, l_caption, l_description, l_story, l_message) \
@@ -1601,7 +1608,7 @@ class BulkDownloader:
                 SELECT
                     count(1) AS "LCOUNT"
                 FROM
-                    "FBWatch"."TB_OBJ"
+                    "TB_OBJ"
                 WHERE
                     "ST_TYPE" != 'Page'
                     AND DATE_PART('day', now()::date - "DT_CRE") >= %s
@@ -1625,10 +1632,10 @@ class BulkDownloader:
                 SELECT
                     "ID", "ID_INTERNAL", "DT_CRE"
                 FROM
-                    "FBWatch"."TB_OBJ"
+                    "TB_OBJ"
                 WHERE
                     "ST_TYPE" != 'Page'
-                    AND DATE_PART('day', now()::date - "DT_CRE") >= {0}
+                    AND DATE_PART('day', now()::date - "DT_CRE") >= %s
                     AND "F_LIKE_DETAIL" is null
             """, (EcAppParam.gcm_likes_depth, ))
 
