@@ -9,6 +9,8 @@ import base64
 import copy
 from PIL import Image
 
+from selenium.webdriver.common.keys import Keys as K
+
 from rbs_fb_connect import *
 
 
@@ -664,8 +666,7 @@ class ProfileDownloader:
                     '//div[contains(@class, "uiPopover")]/a')
 
                 self.m_logger.info('Mode selection link BEFORE: ' + l_modeLink.text)
-                self.m_browserDriver.make_visible_and_click(l_modeLink)
-                l_modeSelector = True
+                l_modeSelector = self.m_browserDriver.make_visible_and_click(l_modeLink)
             except EX.NoSuchElementException:
                 self.m_logger.info('No mode selector')
                 l_modeSelector = False
@@ -689,17 +690,23 @@ class ProfileDownloader:
                             ))
 
                             if l_item.is_displayed() and re.search('\(unfiltered\)', l_item.text):
-                                self.m_browserDriver.make_visible_and_click(l_item)
-                                self.m_logger.info('Menu Item clicked')
-                                l_foundItem = True
-                                time.sleep(.01)
-                                while True:
-                                    try:
-                                        p_story.find_element_by_xpath(
-                                            './/div[contains(@class, "UFICommentContentBlock")]')
-                                        break
-                                    except EX.NoSuchElementException:
-                                        time.sleep(.01)
+                                if self.m_browserDriver.make_visible_and_click(l_item):
+                                    self.m_logger.info('Menu Item clicked')
+                                    l_foundItem = True
+                                    time.sleep(.01)
+                                    while True:
+                                        try:
+                                            p_story.find_element_by_xpath(
+                                                './/div[contains(@class, "UFICommentContentBlock")]')
+                                            break
+                                        except EX.NoSuchElementException:
+                                            time.sleep(.01)
+                                else:
+                                    # Escape -> make the pop-up disappear
+                                    self.m_driver.send_keys(K.ESCAPE)
+                                    l_modeSelector = False
+                                    l_foundItem = False
+                                    break
                         l_candidateNumber += 1
 
                 except EX.TimeoutException:
@@ -745,10 +752,9 @@ class ProfileDownloader:
                     l_additionalComments += l_increment
 
                     # make sure the link is in view and click it
-                    self.m_browserDriver.make_visible_and_click(l_commentLink)
-
-                    l_expansionOccurred = True
-                    l_newCommentsFound = True
+                    if self.m_browserDriver.make_visible_and_click(l_commentLink):
+                        l_expansionOccurred = True
+                        l_newCommentsFound = True
 
                 self.m_logger.info('l_additionalComments: {0}'.format(l_additionalComments))
 

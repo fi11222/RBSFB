@@ -102,7 +102,7 @@ class EcAppParamFacebook(LocalParam):
     Facebook download parameters
     """
     #: Average browser driver life span (in hours)
-    gcm_bdLifeAverage = 2
+    gcm_bdLifeAverage = 1
     #: +/- value (in hours) around average between which the browser driver life span is chosen at random
     gcm_bdLifeDiameter = .25
     #: Minimum size of images to be downloaded (in both directions)

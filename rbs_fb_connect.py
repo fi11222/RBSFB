@@ -199,7 +199,10 @@ class BrowserDriver:
 
         # open vpn
         if p_vpn is not None and len(p_vpn) > 0:
-            self.m_vpn_handle = wrapvpn.OpenvpnWrapper(p_vpn)
+            try:
+                self.m_vpn_handle = wrapvpn.OpenvpnWrapper(p_vpn)
+            except Exception as e:
+                self.m_logger.warning('Unable to launch VPN [{0}]: {1}'.format(p_vpn, repr(e)))
         else:
             self.m_vpn_handle = None
 
@@ -419,10 +422,45 @@ class BrowserDriver:
         
         :return: The token (also stored in :any:`self.m_token_api` 
         """
+        # tries 10 times to log out
         if self.m_token_api != '':
-            self.logout_api()
+            l_error_list = []
+            l_loop_count = 0
+            while True:
+                try:
+                    self.logout_api()
+                    break
+                except Exception as e:
+                    if self.internet_check():
+                        l_error_list.append(repr(e))
+                        l_loop_count += 1
+                        if l_loop_count >= 10:
+                            raise BrowserDriverException('Cannot Log out: {0}'.format(l_error_list))
+                        else:
+                            time.sleep(60)
+                    else:
+                        time.sleep(60 * 5)
+                        self.refresh_page()
 
-        l_accessToken = self.loginAsAPI(self.m_user_api, self.m_pass_api)
+        # tries 10 times to log in and get a new token
+        l_error_list = []
+        l_loop_count = 0
+        while True:
+            try:
+                l_accessToken = self.loginAsAPI(self.m_user_api, self.m_pass_api)
+                break
+            except Exception as e:
+                if self.internet_check():
+                    l_error_list.append(repr(e))
+                    l_loop_count += 1
+                    if l_loop_count >= 10:
+                        raise BrowserDriverException('Cannot Log out: {0}'.format(l_error_list))
+                    else:
+                        time.sleep(60)
+                else:
+                    time.sleep(60 * 5)
+                    self.refresh_page()
+
         if l_accessToken is not None:
             self.m_logger.info('g_FBToken before: {0}'.format(self.m_token_api))
             self.m_token_api = l_accessToken
@@ -447,7 +485,7 @@ class BrowserDriver:
             l_button.click()
         else:
             self.m_logger.warning('Cannot log out; button text mismatch: ' + l_buttonText)
-            return
+            raise BrowserDriverException('Cannot log out; button text mismatch: ' + l_buttonText)
 
         self.m_logger.info('Log out successful')
 
@@ -759,7 +797,7 @@ class BrowserDriver:
 
             l_yComment = p_object.location['y']
             l_delta_y = l_yComment - l_yTop
-            l_yTarget = l_yComment - 200
+            l_yTarget = l_yComment - 300
             if l_delta_y != l_delta_y_js:
                 self.m_logger.warning('l_delta_y_js/l_delta_y: {0}/{1}'.format(l_delta_y_js, l_delta_y))
 
@@ -768,7 +806,7 @@ class BrowserDriver:
                     l_loopCount, l_yTop, l_yComment, l_yTarget, l_delta_y, l_delta_y_js))
 
             # perform click if object is in visibility range
-            if (l_delta_y > 150) and (l_delta_y < self.m_browserHeight - 100):
+            if (l_delta_y > 250) and (l_delta_y < self.m_browserHeight - 200):
                 try:
                     # click the link
                     WebDriverWait(self.m_driver, 10).until(EC.visibility_of(p_object))
@@ -786,7 +824,7 @@ class BrowserDriver:
                 self.m_logger.info('ScrollTo: {0} Done'.format(l_yTarget))
                 l_scrollDone = True
             else:
-                l_scrollValue = self.m_browserHeight - 300
+                l_scrollValue = self.m_browserHeight - 500
                 if l_delta_y < 0:
                     l_scrollValue = - l_scrollValue
                 self.m_driver.execute_script('window.scrollBy(0, {0});'.format(l_scrollValue))
@@ -794,6 +832,12 @@ class BrowserDriver:
 
             time.sleep(.1)
             l_loopCount += 1
+            if l_loopCount >= 100:
+                self.m_logger.warning('Unable to do make_visible_and_click()')
+                return False
+
+        # end while True:
+        return True
 
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":

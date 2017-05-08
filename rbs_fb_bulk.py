@@ -31,9 +31,11 @@ class BulkDownloader:
     """
     Bogus class used to isolate the bulk downloading (FB API) features.
     """
-    def __init__(self, p_browser_driver, p_pool):
+    def __init__(self, p_browser_driver, p_pool, p_phantom_id, p_phantom_pass):
         # Local copy of the browser Driver
         self.m_browserDriver = p_browser_driver
+        self.m_browserDriver.m_user_api = p_phantom_id
+        self.m_browserDriver.m_pass_api = p_phantom_pass
 
         #: Connection pool
         self.m_pool = p_pool
@@ -134,6 +136,7 @@ class BulkDownloader:
         
         :return: Nothing
         """
+        self.m_logger.info('Start bulk_download()')
 
         self.m_logger.info('Getting FB token')
         self.m_browserDriver.get_fb_token()
@@ -143,17 +146,25 @@ class BulkDownloader:
         t1.start()
         self.m_logger.info('Image fetch thread launched')
 
-        # self.getPages()
-        # self.get_posts()
+        self.getPages()
+        self.get_posts()
         self.updatePosts()
         self.getLikesDetail()
 
         self.m_fetch_proceed = False
 
         t1.join()
-        # self.fetch_images()
+
+        self.m_logger.info('End bulk_download()')
 
     def get_posts(self):
+        """
+        Gets the posts from all the pagers in :any:`TB_PAGES`
+        
+        :return: Nothing
+        """
+        self.m_logger.info('Start get_posts()')
+
         l_conn = self.m_pool.getconn('BulkDownloader.get_posts()')
         l_cursor = l_conn.cursor()
 
@@ -163,6 +174,7 @@ class BulkDownloader:
             """)
         except Exception as e:
             self.m_logger.warning('Error selecting from TB_PAGES: {0}/{1}'.format(repr(e), l_cursor.query))
+            raise
 
         for l_id, l_name in l_cursor:
             self.m_logger.info('$$$$$$$$$ [{0}] $$$$$$$$$$'.format(l_name))
@@ -171,13 +183,32 @@ class BulkDownloader:
 
         l_cursor.close()
         self.m_pool.putconn(l_conn)
+        self.m_logger.info('End get_posts()')
 
     def repeat_fetch_images(self):
+        """
+        Calls :any:`BulkDownloader.fetch_images()` repeatedly, with a 10 second delay between calls. Meant to be 
+        the image fetching thread initiated in :any:`BulkDownloader.__init__()`. The loop stops (and the thread 
+        terminates) when :any:`m_fetch_proceed` is set to `False`
+        
+        :return: Nothing 
+        """
+        self.m_logger.info('Start repeat_fetch_images()')
         while self.m_fetch_proceed:
             self.fetch_images()
             time.sleep(10)
 
+        self.m_logger.info('End repeat_fetch_images()')
+
     def fetch_images(self):
+        """
+        Image fetching. Take a block of 500 records in `TB_MEDIA` and attempts to download the pictures they reference
+        (if any).
+        
+        :return: Nothing 
+        """
+        self.m_logger.info('Start fetch_images()')
+
         l_conn = self.m_pool.getconn('BulkDownloader.fetch_images()')
         l_cursor = l_conn.cursor()
         try:
@@ -215,6 +246,7 @@ class BulkDownloader:
 
             l_attempts = 0
             l_error = False
+            l_image_txt = None
             while True:
                 l_attempts += 1
                 if l_attempts > 10:
@@ -263,6 +295,10 @@ class BulkDownloader:
                     l_image_txt = repr(e)
                     l_error = True
                     break
+                except KeyError as e:
+                    self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
+                    l_error = True
+                    break
                 except Exception as e:
                     self.m_logger.warning('Error downloading image: {0}'.format(repr(e)))
                     raise
@@ -286,15 +322,34 @@ class BulkDownloader:
             l_cursor_write.close()
             self.m_pool.putconn(l_conn_write)
             # end if l_img is not None:
+
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+        self.m_logger.info('Else fetch_images()')
+
     def repeat_ocr_image(self):
+        """
+        Calls :any:`BulkDownloader.ocr_images()` repeatedly, with a 30 second delay between calls. Meant to be 
+        the image OCR thread initiated in :any:`BulkDownloader.bulk_download()`. Forever loop. Thread dies with the 
+        application.
+        
+        :return: Nothing
+        """
+        self.m_logger.info('Start repeat_ocr_image()')
         while True:
             self.ocr_images()
             time.sleep(30)
 
     def ocr_images(self):
+        """
+        Takes a block of (normally 500) `TB_MEDIA` records with downloaded images and attempts OCR. Stores the results
+        in appropriate fields in `TB_MEDIA`
+        
+        :return: 
+        """
+        self.m_logger.info('Start ocr_images()')
+
         # SQL Offset
         l_offset = 0
         l_max_img_count = 500
@@ -651,8 +706,17 @@ class BulkDownloader:
             for l_suf, l_count in l_suf_list:
                 print('{0:4} {1}'.format(l_count, l_suf))
 
-    # calls Facebook's HTTP API and traps errors if any
+        self.m_logger.info('Start ocr_images()')
+
     def performRequest(self, p_request):
+        """
+        Calls Facebook's HTTP API and traps errors if any.
+          
+        :param p_request: The API request 
+        :return: The response to the request from the FB API server.
+        """
+        self.m_logger.debug('Start performRequest()')
+
         l_request = p_request
 
         l_finished = False
@@ -780,9 +844,17 @@ class BulkDownloader:
                 time.sleep(1)
                 l_errCount += 1
 
+        self.m_logger.debug('End performRequest()')
         return l_response
 
     def getWait(self, p_errorCount):
+        """
+        Selects the appropriate wait-time depending on the number of accumulated errors 
+        (for :any:`BulkDownloader.performRequest`)
+        
+        :param p_errorCount: Number of errors so far. 
+        :return: The wait delay in seconds.
+        """
         if p_errorCount < 3:
             return 5
         elif p_errorCount < 6:
@@ -802,7 +874,14 @@ class BulkDownloader:
             raise BulkDownloaderException('Too many errors: {0}'.format(p_errorCount))
 
     def getPages(self):
-        # list of likes from user --> starting point
+        """
+        Gets the page list from likes list of the operating user.
+        
+        :return: Nothing 
+        """
+        self.m_logger.info('Start getPages()')
+
+        # list of likes from operating user --> starting point
         l_request = 'https://graph.facebook.com/{0}/me/likes?access_token={1}'.format(
             EcAppParam.gcm_api_version, self.m_browserDriver.m_token_api)
         l_response = self.performRequest(l_request)
@@ -838,6 +917,7 @@ class BulkDownloader:
 
                 # get posts from the page
                 # getPostsFromPage(l_pageId)
+            # end of for l_liked in l_responseData['data']:
 
             if 'paging' in l_responseData.keys() and 'next' in l_responseData['paging'].keys():
                 l_request = l_responseData['paging']['next']
@@ -846,8 +926,9 @@ class BulkDownloader:
                 l_responseData = json.loads(l_response)
             else:
                 l_finished = True
+        # end of while not l_finished:
 
-    # l_icon l_permalink_url l_status_type l_updated_time l_place l_tags l_with_tags l_properties
+        self.m_logger.info('End getPages()')
 
     def storeObject(self,
                     p_padding,
@@ -876,6 +957,39 @@ class BulkDownloader:
                     p_tags='',
                     p_with_tags='',
                     p_properties=''):
+
+        """
+        DB storage of a new object.
+        
+        :param p_padding: 
+        :param p_type: 
+        :param p_date_creation: 
+        :param p_date_modification: 
+        :param p_id: 
+        :param p_parentId: 
+        :param p_pageId: 
+        :param p_postId: 
+        :param p_fb_type: 
+        :param p_fb_status_type: 
+        :param p_shareCount: 
+        :param p_likeCount: 
+        :param p_permalink_url: 
+        :param p_name: 
+        :param p_caption: 
+        :param p_desc: 
+        :param p_story: 
+        :param p_message: 
+        :param p_link: 
+        :param p_picture: 
+        :param p_place: 
+        :param p_source: 
+        :param p_userId: 
+        :param p_tags: 
+        :param p_with_tags: 
+        :param p_properties: 
+        :return: `True` if insertion occurred
+        """
+        self.m_logger.debug('Start storeObject()')
 
         self.m_objectStoreAttempts += 1
 
@@ -979,9 +1093,24 @@ class BulkDownloader:
             '{0}Object counts: {1} attempts / {2} stored / {3} posts retrieved / {4} comments retrieved'.format(
             p_padding, self.m_objectStoreAttempts, self.m_objectStored, self.m_postRetrieved, self.m_commentRetrieved))
 
+        self.m_logger.debug('End storeObject()')
         return l_stored
 
     def updateObject(self, p_id, p_shareCount, p_likeCount, p_name, p_caption, p_desc, p_story, p_message):
+        """
+        Update of an existing object.
+        
+        :param p_id: 
+        :param p_shareCount: 
+        :param p_likeCount: 
+        :param p_name: 
+        :param p_caption: 
+        :param p_desc: 
+        :param p_story: 
+        :param p_message: 
+        :return: `True` if update completed.
+        """
+        self.m_logger.debug('Start updateObject()')
         l_stored = False
 
         l_conn = self.m_pool.getconn('BulkDownloader.updateObject()')
@@ -1013,9 +1142,20 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+        self.m_logger.debug('End updateObject()')
         return l_stored
 
     def storeUser(self, p_id, p_name, p_date, p_padding):
+        """
+        DB Storage of a new user. If user already in the BD, traps the integrity violation error and returns `False`.
+        
+        :param p_id: User ID (API App. specific)
+        :param p_name: User Name
+        :param p_date: Date of the object in which user first appeared.
+        :param p_padding: Debug/Info massage left padding.
+        :return: `True` if insertion occurred.
+        """
+        self.m_logger.debug('Start storeUser()')
         # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
         l_date = re.sub('T', ' ', p_date)
         l_date = re.sub(r'\+\d+$', '', l_date)
@@ -1028,7 +1168,7 @@ class BulkDownloader:
         l_conn = self.m_pool.getconn('BulkDownloader.storeUser()')
         l_cursor = l_conn.cursor()
 
-        # print(l_query)
+        l_inserted = False
         try:
             l_cursor.execute("""
                 INSERT INTO "TB_USER"("ID", "ST_NAME", "DT_CRE", "DT_MSG")
@@ -1040,6 +1180,7 @@ class BulkDownloader:
                 l_date
             ))
             l_conn.commit()
+            l_inserted = True
         except psycopg2.IntegrityError as e:
             self.m_logger.info('{0}User already known: [{1}]'.format(p_padding, e))
             # print('{0}PostgreSQL: {1}'.format(p_padding, e))
@@ -1051,7 +1192,17 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+        self.m_logger.debug('End storeUser()')
+        return l_inserted
+
     def getUserInternalId(self, p_id):
+        """
+        Looks up the internal ID of an user based on its API App-specific ID.
+        
+        :param p_id: API App-specific ID.
+        :return: Internal ID
+        """
+        self.m_logger.debug('Start getUserInternalId()')
         l_conn = self.m_pool.getconn('BulkDownloader.getUserInternalId()')
         l_cursor = l_conn.cursor()
 
@@ -1073,9 +1224,19 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+        self.m_logger.debug('End getUserInternalId()')
         return l_retId
 
     def createLikeLink(self, p_userIdInternal, p_objIdInternal, p_date):
+        """
+        DB storage of a link between a liked object and the author of the like.
+        
+        :param p_userIdInternal: Internal ID of the user. 
+        :param p_objIdInternal:  Internal ID of the object.
+        :param p_date: Date the like was placed.
+        :return: `True` if insertion occurred.
+        """
+        self.m_logger.debug('Start createLikeLink()')
         # date format: 2016-04-22T12:03:06+0000 ---> 2016-04-22 12:03:06
         l_date = re.sub('T', ' ', p_date)
         l_date = re.sub(r'\+\d+$', '', l_date)
@@ -1083,12 +1244,14 @@ class BulkDownloader:
         l_conn = self.m_pool.getconn('BulkDownloader.creatLikeLink()')
         l_cursor = l_conn.cursor()
 
+        l_inserted = False
         try:
             l_cursor.execute("""
                 INSERT INTO "TB_LIKE"("ID_USER_INTERNAL","ID_OBJ_INTERNAL","DT_CRE")
                 VALUES( %s, %s, %s )
             """, (p_userIdInternal, p_objIdInternal, l_date))
             l_conn.commit()
+            l_inserted = True
         except psycopg2.IntegrityError:
             l_conn.rollback()
             if EcAppParam.gcm_verboseModeOn:
@@ -1100,7 +1263,17 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+        self.m_logger.debug('End createLikeLink()')
+        return l_inserted
+
     def setLikeFlag(self, p_id):
+        """
+        Sets a flag on an object to indicate that the like details have been fetched.
+        
+        :param p_id: API App-specific ID of the object.
+        :return: Nothing 
+        """
+        self.m_logger.debug('Start setLikeFlag()')
         l_conn = self.m_pool.getconn('BulkDownloader.setLikeFlag()')
         l_cursor = l_conn.cursor()
 
@@ -1119,8 +1292,26 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+        self.m_logger.debug('End setLikeFlag()')
+
     def store_media(
             self, p_id, p_fb_type, p_desc, p_title, p_tags, p_target, p_media, p_media_src, p_width, p_height):
+        """
+        Db storage of a media element.
+        
+        :param p_id: 
+        :param p_fb_type: 
+        :param p_desc: 
+        :param p_title: 
+        :param p_tags: 
+        :param p_target: 
+        :param p_media: 
+        :param p_media_src: 
+        :param p_width: 
+        :param p_height: 
+        :return: Nothing (the insertion will always succeed except for technical malfunction)
+        """
+        self.m_logger.debug('Start store_media()')
 
         l_conn = self.m_pool.getconn('BulkDownloader.storeUser()')
         l_cursor = l_conn.cursor()
@@ -1152,8 +1343,17 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+        self.m_logger.debug('Start store_media()')
+
     @classmethod
     def getOptionalField(self, p_json, p_field):
+        """
+        Macro to get a field from an API response that may or may not be present.
+        
+        :param p_json: The API response JSON fragment 
+        :param p_field: The requested field
+        :return: The field contents if present (full + shortened to 100 char). Empty strings otherwise.
+        """
         l_value = ''
         l_valueShort = ''
 
@@ -1167,7 +1367,13 @@ class BulkDownloader:
         return l_value, l_valueShort
 
     def getPostsFromPage(self, p_id):
-        # get list of posts in this page's feed
+        """
+        Gets all new posts from a page and store them in the DB.
+        
+        :param p_id: ID (API App-specific) of the page to get the posts from 
+        :return: Nothing
+        """
+        self.m_logger.info('Start getPostsFromPage()')
 
         l_fieldList = 'id,caption,created_time,description,from,icon,link,message,message_tags,name,object_id,' + \
                       'permalink_url,picture,place,properties,shares,source,status_type,story,to,type,' + \
@@ -1327,10 +1533,24 @@ class BulkDownloader:
                 l_responseData = json.loads(l_response)
             else:
                 break
-
             # end while not l_finished:
 
+        self.m_logger.info('End getPostsFromPage()')
+
     def getPostAttachments(self, p_id, p_status_type, p_source, p_link, p_picture, p_properties):
+        """
+        Gets all attachments from a post.
+        
+        :param p_id: API App-specific ID of the post. 
+        :param p_status_type: 
+        :param p_source: 
+        :param p_link: 
+        :param p_picture: 
+        :param p_properties: 
+        :return: Nothing
+        """
+        self.m_logger.debug('Start getPostAttachments()')
+
         # get list of attachments attached to this post
         l_fieldList = 'description,description_tags,media,target,title,type,url,attachments,subattachments'
 
@@ -1345,10 +1565,24 @@ class BulkDownloader:
 
         self.scan_attachments(l_responseData['data'],
                               p_id, p_status_type, p_source, p_link, p_picture, p_properties, 1)
+        self.m_logger.info('debug getPostAttachments()')
 
     def scan_attachments(self, p_attachment_list,
                          p_id, p_status_type, p_source, p_link, p_picture, p_properties, p_depth):
-
+        """
+        Scans a JSON response fragment in order to get attachments and (through recursion) sub-attachments, if any.
+        
+        :param p_attachment_list: 
+        :param p_id: 
+        :param p_status_type: 
+        :param p_source: 
+        :param p_link: 
+        :param p_picture: 
+        :param p_properties: 
+        :param p_depth: 
+        :return: Nothing 
+        """
+        self.m_logger.debug('Start scan_attachments()')
         l_depthPadding = ' ' * (p_depth * 3)
 
         l_attachmentCount = 0
@@ -1413,8 +1647,21 @@ class BulkDownloader:
                                       p_id, p_status_type, p_source, p_link, p_picture, p_properties, p_depth+1)
 
             l_attachmentCount += 1
+        # end of for l_attachment in p_attachment_list:
+
+        self.m_logger.debug('End scan_attachments()')
 
     def getComments(self, p_id, p_postId, p_pageId, p_depth):
+        """
+        Gets comments from a post or another comment.
+        
+        :param p_id: API App-specific ID of the object or comment.
+        :param p_postId: 
+        :param p_pageId: 
+        :param p_depth: 
+        :return: Nothing. 
+        """
+        self.m_logger.debug('Start scan_attachments()')
         l_depthPadding = ' ' * ((p_depth + 2) * 3)
 
         # get list of comments attached to this post (or this comment)
@@ -1507,16 +1754,22 @@ class BulkDownloader:
             else:
                 break
 
-        self.m_logger.info('{0}comment download count --> {1}'.format(l_depthPadding[:-3], l_commCount))
+        self.m_logger.info('[End scan_attachments()] {0}comment download count --> {1}'.format(
+            l_depthPadding[:-3], l_commCount))
 
     def updatePosts(self):
+        """
+        Update existing posts: Text modifications, new comments, likes count.
+        
+        :return: Nothing 
+        """
+        self.m_logger.info('Start updatePosts()')
         l_conn = self.m_pool.getconn('BulkDownloader.updatePosts()')
         l_cursor = l_conn.cursor()
 
         # All posts not older than G_DAYS_DEPTH days and not already updated in the last day
         # Among these, comments to be downloaded only for those which were not created today
         # ("DT_LAST_UPDATE" not null)
-
         try:
             l_cursor.execute("""
                 select
@@ -1597,8 +1850,15 @@ class BulkDownloader:
 
         l_cursor.close()
         self.m_pool.putconn(l_conn)
+        self.m_logger.info('End updatePosts()')
 
     def getLikesDetail(self):
+        """
+        Get the likes details of sufficiently old posts.
+        
+        :return: Nothing
+        """
+        self.m_logger.info('Start getLikesDetail()')
         l_conn = self.m_pool.getconn('BulkDownloader.getLikesDetail()')
         l_cursor = l_conn.cursor()
 
@@ -1689,6 +1949,8 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
+        self.m_logger.info('End getLikesDetail()')
+
 # ---------------------------------------------------- Main section ----------------------------------------------------
 if __name__ == "__main__":
     print('+------------------------------------------------------------+')
@@ -1748,7 +2010,7 @@ if __name__ == "__main__":
     l_driver.m_user_api = l_phantomId0
     l_driver.m_pass_api = l_phantomPwd0
 
-    l_downloader = BulkDownloader(l_driver, l_pool)
+    l_downloader = BulkDownloader(l_driver, l_pool, l_phantomId0, l_phantomPwd0)
     l_downloader.bulk_download()
 
     if EcAppParam.gcm_headless:

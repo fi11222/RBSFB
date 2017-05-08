@@ -118,14 +118,14 @@ class OpenvpnWrapper:
         # function to output lines as a queue
         # from http://stackoverflow.com/questions/375427/non-blocking-read-on-a-subprocess-pipe-in-python
         def enqueue_output(out, queue):
-            self.m_logger.info('Thread Started')
+            self.m_logger.info('Queue Thread Started')
             try:
                 for line in iter(out.readline, b''):
                     queue.put(line)
             except ValueError:
-                self.m_logger.info('Ok, we caught the error')
+                self.m_logger.info('Queue: Ok, we caught the error')
             out.close()
-            self.m_logger.info('Thread Terminated')
+            self.m_logger.info('Queue Thread Terminated')
 
         l_outputQueue = Queue()
         t = Thread(target=enqueue_output, args=(self.m_process.stdout, l_outputQueue))
@@ -142,19 +142,23 @@ class OpenvpnWrapper:
 
                 # kills all openvpn processes if still running
                 if self.m_process.poll() is None:
+                    if l_elapsed > 60.0:
+                        self.m_logger.info('Timeout Exceeded. Killing vpn process ...')
                     l_result = run(['sudo', 'killall', '-r', '-9', '.*openvpn'], stdout=PIPE, stderr=PIPE)
-                    self.m_logger.info('Killing vpn processes : ' + repr(l_result))
+                    self.m_logger.info('Killed vpn processes : ' + repr(l_result))
 
                 l_out, l_err = self.m_process.communicate()
 
-                l_out = l_out.decode().strip()
-                l_err = l_err.decode().strip()
-                #l_out = self.m_process.stdout.readline().strip()
-                #l_err = self.m_process.stderr.readline().strip()
+                try:
+                    l_out = l_out.decode().strip()
+                    l_err = l_err.decode().strip()
+                except Exception as e:
+                    self.m_logger.info('l_out and l_err are strings? : {0}'.format(repr(e)))
+
                 self.m_logger.warning('+++ ' + l_out)
                 self.m_logger.warning('--- ' + l_err)
 
-                if l_elapsed > 60:
+                if l_elapsed > 60.0:
                     raise OpenVpnFailure('Timeout exceeded')
                 else:
                     raise OpenVpnFailure('Process terminated unexpectedly')

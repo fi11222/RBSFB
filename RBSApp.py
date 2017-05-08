@@ -5,6 +5,7 @@ from ec_app_core import *
 from ec_request_handler import *
 
 from rbs_fb_profile import *
+from rbs_fb_bulk import *
 
 from wrapvpn import OpenvpnWrapper, OpenVpnFailure
 
@@ -12,6 +13,7 @@ import json
 import random
 import sys
 import locale
+import pytz
 from socketserver import ThreadingMixIn
 
 __author__ = 'Pavan Mahalingam'
@@ -34,6 +36,9 @@ class RbsBackgroundTask(threading.Thread):
 
         #: The browser driver class (:any:`BrowserDriver`)
         self.m_browser = None
+
+        #: Bulk Downloader
+        self.m_bulk = None
 
         #: Connection pool
         self.m_pool = p_pool
@@ -156,11 +161,17 @@ class RbsBackgroundTask(threading.Thread):
         :return: Nothing 
         """
         l_phantomList = [
-            ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn'),
-            ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None),
-            ('kabir.abdulhami@gmail.com', '12Alhamdulillah', 'India.Maharashtra.Mumbai.TCP.ovpn'),
-            ('nicolas.reimen@gmail.com', 'murugan!', None),
+            ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn', 12, 3),
+            # ('kabeer.burnahuddin@gmail.com', '15Eyyaka', 'India.Maharashtra.Mumbai.UDP.ovpn', 2, 17),
+            ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None, 2, 17),
+            ('nicolas.reimen@gmail.com', 'murugan!', None, 2, 17),
+            ('yahia.almasoodi@yahoo.com', '15Eyyaka', 'UnitedArabEmirates.Dubai_LOC1S1.TCP.ovpn', 4, 19),
+            ('bulk', None, None, 20, 1)
+            # ('bulk', None, None, 1, 24)
         ]
+
+        l_bulk_id = 'nicolas.reimen@gmail.com'
+        l_bulk_pass = 'murugan!'
 
         l_phantomIndex = EcAppParam.gcm_startPhantomNo
 
@@ -200,6 +211,8 @@ class RbsBackgroundTask(threading.Thread):
 
                 try:
                     self.m_browser = BrowserDriver()
+                    # instantiate the bulk downloader --> starts the OCR thread
+                    self.m_bulk = BulkDownloader(self.m_browser, self.m_pool, l_bulk_id, l_bulk_pass)
                     self.m_logger.info('*** Browser Driver set-up complete')
                 except Exception as e:
                     self.m_logger.warning('Unable to instantiate browser: ' + repr(e))
@@ -210,15 +223,50 @@ class RbsBackgroundTask(threading.Thread):
                 # --> Login
                 self.m_logger.info('>> login')
 
-                l_phantomId, l_phantomPwd, l_vpn = l_phantomList[l_phantomIndex]
+                l_phantomId, l_phantomPwd, l_vpn, l_morning, l_evening = l_phantomList[l_phantomIndex]
                 l_phantomIndex += 1
                 if l_phantomIndex >= len(l_phantomList):
                     l_phantomIndex = 0
+
+                # test appropriate time ?
+                l_now = datetime.datetime.now(tz=pytz.utc)
+                self.m_logger.info('Now: {0}'.format(l_now.strftime('%d/%m/%Y %H:%M')))
+                if l_morning < l_evening:
+                    l_morning_date = l_now + datetime.timedelta(hours=l_morning-l_now.hour, minutes=-l_now.minute)
+                    l_evening_date = l_now + datetime.timedelta(hours=l_evening-l_now.hour, minutes=-l_now.minute)
+                    l_in_range = (l_now >= l_morning_date and l_now <= l_evening_date)
+
+                    self.m_logger.info('Bracket: [{0} - {1}]'.format(
+                        l_morning_date.strftime('%d/%m/%Y %H:%M'), l_evening_date.strftime('%d/%m/%Y %H:%M')))
+                else:
+                    l_morning_date_m = l_now + datetime.timedelta(hours=-24+l_morning-l_now.hour, minutes=-l_now.minute)
+                    l_evening_date_m = l_now + datetime.timedelta(hours=l_evening-l_now.hour, minutes=-l_now.minute)
+                    self.m_logger.info('Bracket (day-1) : [{0} - {1}]'.format(
+                        l_morning_date_m.strftime('%d/%m/%Y %H:%M'), l_evening_date_m.strftime('%d/%m/%Y %H:%M')))
+
+                    l_morning_date_p = l_now + datetime.timedelta(hours=l_morning-l_now.hour, minutes=-l_now.minute)
+                    l_evening_date_p = l_now + datetime.timedelta(hours=l_evening-l_now.hour+24, minutes=-l_now.minute)
+                    self.m_logger.info('Bracket (day+1) : [{0} - {1}]'.format(
+                        l_morning_date_p.strftime('%d/%m/%Y %H:%M'), l_evening_date_p.strftime('%d/%m/%Y %H:%M')))
+
+                    l_in_range = (l_morning_date_m <= l_now and l_now < l_evening_date_m) or \
+                                 (l_morning_date_p <= l_now and l_now < l_evening_date_p)
+
+                if not l_in_range:
+                    self.m_logger.info('Not in range')
+                    continue
 
                 self.m_logger.info('%%%%%%%%%% USER %%%%%%%%%%%%%%%')
                 self.m_logger.info('User: {0}'.format(l_phantomId))
                 self.m_logger.info('Pwd : {0}'.format(l_phantomPwd))
                 self.m_logger.info('Vpn : {0}'.format(l_vpn))
+
+                if l_phantomId == 'bulk':
+                    self.log_phantom_connection(l_phantomId, l_vpn, l_phantomPwd, p_logIn=True, p_success=True)
+                    self.m_bulk.bulk_download()
+                    self.log_phantom_connection(l_phantomId, None, None, p_logIn=False, p_success=True)
+                    sys.exit(0)
+                    # continue
 
                 try:
                     self.m_browser.login_as_scrape(l_phantomId, l_phantomPwd, l_vpn)
@@ -255,7 +303,7 @@ class RbsBackgroundTask(threading.Thread):
                     l_downloader.get_fb_profile()
 
                     # self.m_browser.go_to_id(None, 'ArmyAnonymous/', None)
-                    # self.m_browser.get_fb_profile(p_feedType='Page')
+                    # l_downloader.get_fb_profile(p_feedType='Page')
                     self.m_logger.info(
                         '*** User data download complete. Elapsed time: {0}'.format(time.perf_counter() - t0))
                 except EX.TimeoutException as e:
@@ -642,7 +690,7 @@ class StartApp:
                         * Health check: launched by application base class (:any:`EcAppCore`)
                         * Stories downloading: launched by app specific subclass (:any:`RbsApp`)
         """
-        print('ScripTrans server starting ...')
+        print('EC server starting ...')
 
         # random generator init
         random.seed()
@@ -704,12 +752,11 @@ class StartApp:
         l_locale, l_encoding = locale.getlocale(locale.LC_TIME)
         if l_locale is None:
             locale.setlocale(locale.LC_TIME, locale.getlocale(locale.LC_CTYPE))
+        EcLogger.root_logger().info('locale (LC_TIME)  : {0}'.format(locale.getlocale(locale.LC_TIME)))
 
         EcLogger.root_logger().info('gcm_appName       : ' + EcAppParam.gcm_appName)
         EcLogger.root_logger().info('gcm_appVersion    : ' + EcAppParam.gcm_appVersion)
         EcLogger.root_logger().info('gcm_appTitle      : ' + EcAppParam.gcm_appTitle)
-        EcLogger.root_logger().info('locale (LC_CTYPE) : {0}'.format(locale.getlocale(locale.LC_CTYPE)))
-        EcLogger.root_logger().info('locale (LC_TIME)  : {0}'.format(locale.getlocale(locale.LC_TIME)))
 
         # final success message (sends an e-mail message because it is a warning)
         EcLogger.cm_logger.warning('Server up and running at [{0}:{1}]'
