@@ -61,6 +61,7 @@ class BulkDownloader:
         # Launch OCR thread
         self.m_logger.info('starting Image ocr thread ....')
         t1 = Thread(target=self.repeat_ocr_image)
+        t1.name = 'O'
         t1.start()
         self.m_logger.info('Image OCR thread started')
 
@@ -143,6 +144,7 @@ class BulkDownloader:
 
         self.m_fetch_proceed = True
         t1 = Thread(target=self.repeat_fetch_images)
+        t1.name = 'I'
         t1.start()
         self.m_logger.info('Image fetch thread launched')
 
@@ -326,7 +328,7 @@ class BulkDownloader:
         l_cursor.close()
         self.m_pool.putconn(l_conn)
 
-        self.m_logger.info('Else fetch_images()')
+        self.m_logger.info('End fetch_images()')
 
     def repeat_ocr_image(self):
         """
@@ -1997,12 +1999,8 @@ if __name__ == "__main__":
     except Exception as e0:
         EcMailer.send_mail('Failed to initialize EcLogger', repr(e0))
 
-
-    # l_phantomId0 = 'nicolas.reimen@gmail.com'
-    # l_phantomPwd0 = 'murugan!'
-    l_phantomId0, l_phantomPwd0 = 'kabir.abdulhami@gmail.com', '12Alhamdulillah',
+    l_phantomId0, l_phantomPwd0, l_vpn0 = 'nicolas.reimen@gmail.com', 'murugan!', None
     # l_vpn = 'India.Maharashtra.Mumbai.TCP.ovpn'
-    l_vpn0 = None
 
     l_driver = BrowserDriver()
     l_pool = EcConnectionPool.get_new()

@@ -44,6 +44,7 @@ class RbsBackgroundTask(threading.Thread):
         self.m_pool = p_pool
 
         # starts the thread
+        self.name = 'B'
         self.start()
 
     def internet_check(self):

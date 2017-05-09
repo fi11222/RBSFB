@@ -89,6 +89,7 @@ class EcAppCore(threading.Thread):
         self.m_hcCounter = 0
 
         # starts the refresh thread
+        self.name = 'S'
         self.start()
 
     #: Connection pool access
@@ -125,13 +126,20 @@ class EcAppCore(threading.Thread):
         Every tenth time (once in 5 min.) a full recording of system parameters is made through
         `psutil <https://pythonhosted.org/psutil/>`_ and stored in `TB_MSG`.
         """
+        l_thread_list = []
+        for t in threading.enumerate():
+            l_thread_list.append(t.name)
+        l_thread_list.sort()
+        l_thread_list = ''.join(l_thread_list)
+
         l_mem = psutil.virtual_memory()
 
-        self.m_logger.info('System Health Check - Available RAM: {0} Mb ({1} % usage)'.format(
-            l_mem.available / (1024 * 1024), l_mem.percent))
+        self.m_logger.info(('System Health Check - Available RAM: {0:.2f} Mb ({1:.2f} % usage) ' +
+                            'Threads: {2}').format(
+            l_mem.available / (1024 * 1024), l_mem.percent, l_thread_list))
 
-        if l_mem.percent > 75:
-            self.m_logger.warning('System Health Check ALERT - Available RAM: {0} Mb ({1} % usage)'.format(
+        if l_mem.percent >= 75.0:
+            self.m_logger.warning('System Health Check ALERT - Available RAM: {0:.2f} Mb ({1:.2f} % usage)'.format(
                 l_mem.available / (1024 * 1024), l_mem.percent))
 
         # full system resource log every 5 minutes

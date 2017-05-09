@@ -434,6 +434,7 @@ class BrowserDriver:
                     if self.internet_check():
                         l_error_list.append(repr(e))
                         l_loop_count += 1
+                        self.m_logger.debug('[logout attempt] l_loop_count: {0}'.format(l_loop_count))
                         if l_loop_count >= 10:
                             raise BrowserDriverException('Cannot Log out: {0}'.format(l_error_list))
                         else:
@@ -445,6 +446,7 @@ class BrowserDriver:
         # tries 10 times to log in and get a new token
         l_error_list = []
         l_loop_count = 0
+        l_accessToken = None
         while True:
             try:
                 l_accessToken = self.loginAsAPI(self.m_user_api, self.m_pass_api)
@@ -453,8 +455,10 @@ class BrowserDriver:
                 if self.internet_check():
                     l_error_list.append(repr(e))
                     l_loop_count += 1
+                    self.m_logger.debug('[login attempt] l_loop_count: {0}'.format(l_loop_count))
                     if l_loop_count >= 10:
-                        raise BrowserDriverException('Cannot Log out: {0}'.format(l_error_list))
+                        self.m_logger.critical('Cannot Log in: {0}'.format(l_error_list))
+                        break
                     else:
                         time.sleep(60)
                 else:
@@ -519,8 +523,10 @@ class BrowserDriver:
                 time.sleep(2)
                 l_button.click()
             else:
-                self.m_logger.warning('Cannot log in; button text mismatch: ' + l_buttonText)
-                return None
+                self.m_logger.critical('Cannot log in; button text mismatch: ' + l_buttonText)
+                l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
+                self.m_logger.info('Whole HTML of <body>: ' + l_body)
+                raise BrowserDriverException('Cannot log in; button text mismatch: ' + l_buttonText)
 
             # Handle log-in pop-up
             l_finished = False
@@ -546,11 +552,17 @@ class BrowserDriver:
                             # submit the form
                             self.m_driver.find_element_by_id('loginbutton').click()
                         except EX.NoSuchElementException:
-                            self.m_logger.info('[01] Something is badly wrong (Element not found) ...')
-                            return None
+                            self.m_logger.critical('[01] Something is badly wrong (Element not found) ...')
+                            raise BrowserDriverException('[01] Something is badly wrong (Element not found) ...')
                         except EX.TimeoutException:
-                            self.m_logger.info('[02] Something is badly wrong (Timeout) ...')
-                            return None
+                            self.m_logger.critical('[02] Something is badly wrong (Timeout) ...')
+                            raise BrowserDriverException('[02] Something is badly wrong (Timeout) ...')
+                        except Exception as e:
+                            self.m_logger.critical('[03] Something is badly wrong (Unknown): {0}'.format(repr(e)))
+                            l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
+                            self.m_logger.info('Whole HTML of <body>: ' + l_body)
+                            raise BrowserDriverException(
+                                '[03] Something is badly wrong (Unknown): {0}'.format(repr(e)))
 
                         break
 
@@ -582,21 +594,22 @@ class BrowserDriver:
                 self.m_logger.info('Waiting for status update in login page: {0}'.format(l_count))
                 time.sleep(.1)
                 l_count += 1
-                if l_count >= 300:
-                    self.m_logger.info('Could not retrieve token')
-                    return None
+                if l_count >= 25:
+                    self.m_logger.critical('Could not retrieve token in status line')
+                    l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
+                    self.m_logger.info('Whole HTML of <body>: ' + l_body)
+                    raise BrowserDriverException('Could not retrieve token in status line')
 
             l_accessToken = l_status.text.split('|')[1]
 
         except EX.TimeoutException:
-            self.m_logger.info('Did not find button')
+            self.m_logger.critical('Did not find status line')
 
             l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
-            self.m_logger.info('Whole HTML: ' + l_body)
-            return None
+            self.m_logger.info('Whole HTML of <body>: ' + l_body)
+            raise BrowserDriverException('Did not find status line')
 
         self.m_logger.info('Successfully logged in as [{0}]'.format(p_user))
-
         return l_accessToken
 
     def go_to_id(self, p_id, p_userId, p_idInternal=None, p_name='<Unknown>', p_type='Page'):
