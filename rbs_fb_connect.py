@@ -217,6 +217,7 @@ class BrowserDriver:
 
             # sends the user ID string to it
             l_userInput.send_keys(p_user)
+            l_userInput.clear()
             self.m_logger.info('User ID entered: {0}'.format(p_user))
 
             # wait for the presence of the user password (or e-mail) text input field.
@@ -225,6 +226,7 @@ class BrowserDriver:
 
             # sends the password string to it
             l_pwdInput.send_keys(p_passwd)
+            l_pwdInput.clear()
             self.m_logger.info('Password entered: {0}'.format(p_passwd))
 
             # finds the log-in button and clicks it

@@ -178,8 +178,18 @@ class OpenvpnWrapper:
                 # if "Initialization Sequence Completed" appears in message --> connexion established
                 if re.search('Initialization Sequence Completed', l_out):
                     self.m_logger.info('OpenVpn pid  : {0}'.format(self.m_process.pid))
+
                     # print new IP
-                    self.m_logger.info('New Ip       : ' + OpenvpnWrapper.getOwnIp())
+                    while True:
+                        try:
+                            l_new_ip = OpenvpnWrapper.getOwnIp()
+                            break
+                        except OpenVpnFailure:
+                            self.m_logger.warning('Own IP not obtained - Internet connection probably down')
+                            self.m_logger.info('Waiting for 5 minutes before trying again')
+                            time.sleep(5*60)
+
+                    self.m_logger.info('New Ip       : {0}'.format(l_new_ip))
                     self.m_logger.info('Elapsed time : {0:.4f} seconds'.format(l_elapsed))
 
                     break
