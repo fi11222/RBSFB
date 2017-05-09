@@ -449,6 +449,7 @@ class BrowserDriver:
         l_accessToken = None
         while True:
             try:
+                self.m_logger.info('User/pass: {0}/{1}'.format(self.m_user_api, self.m_pass_api))
                 l_accessToken = self.loginAsAPI(self.m_user_api, self.m_pass_api)
                 break
             except Exception as e:
@@ -543,12 +544,17 @@ class BrowserDriver:
                             # locate the user name (email) input box and enter the user name
                             l_user = WebDriverWait(self.m_driver, 10).until(EC.presence_of_element_located(
                                 (By.ID, 'email')))
+                            l_user.clear()
                             l_user.send_keys(p_user)
+                            self.m_logger.info('p_user: ' + p_user)
 
                             # locate the password input box and enter the apssword
                             l_pwd = self.m_driver.find_element_by_id('pass')
+                            l_pwd.clear()
                             l_pwd.send_keys(p_passwd)
+                            self.m_logger.info('p_passwd: ' + p_passwd)
 
+                            # time.sleep(5)
                             # submit the form
                             self.m_driver.find_element_by_id('loginbutton').click()
                         except EX.NoSuchElementException:

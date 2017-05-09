@@ -21,6 +21,8 @@ __author__ = 'Pavan Mahalingam'
 # https://pypi.python.org/pypi/tesserocr
 # apt-get install tesseract-ocr libtesseract-dev libleptonica-dev
 # sudo pip3 install Cython
+# sudo apt-get install g++
+# sudo apt-get install python3-dev
 # sudo pip3 install tesserocr
 
 class BulkDownloaderException(Exception):
@@ -59,11 +61,12 @@ class BulkDownloader:
         self.m_page = None
 
         # Launch OCR thread
-        self.m_logger.info('starting Image ocr thread ....')
-        t1 = Thread(target=self.repeat_ocr_image)
-        t1.name = 'O'
-        t1.start()
-        self.m_logger.info('Image OCR thread started')
+        if EcAppParam.gcm_ocr_thread:
+            self.m_logger.info('starting Image ocr thread ....')
+            t1 = Thread(target=self.repeat_ocr_image)
+            t1.name = 'O'
+            t1.start()
+            self.m_logger.info('Image OCR thread started')
 
         # boolean variable controlling the fetch image thread
         self.m_fetch_proceed = True
