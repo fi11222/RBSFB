@@ -194,6 +194,9 @@ class OpenvpnWrapper:
 
                     break
 
+    def is_alive(self):
+        return self.m_process.poll() is None
+
     def close(self):
         l_result = run(['sudo', 'killall', '-r', '-9', '.*openvpn'], stdout=PIPE, stderr=PIPE)
         self.m_logger.info('Killing vpn processes : ' + repr(l_result))

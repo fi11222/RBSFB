@@ -232,7 +232,9 @@ class BrowserDriver:
             self.m_logger.info('Password entered: {0}'.format(p_passwd))
 
             # finds the log-in button and clicks it
-            self.m_driver.find_element_by_xpath('//label[@id="loginbutton"]/input').click()
+            l_button = WebDriverWait(self.m_driver, 60).until(
+                EC.presence_of_element_located((By.XPATH, '//label[@id="loginbutton"]/input')))
+            l_button.click()
             self.m_logger.info('Login button clicked')
 
             # time.sleep(3600)
@@ -266,7 +268,9 @@ class BrowserDriver:
                 self.m_logger.info('Password entered: {0}'.format(p_passwd))
 
                 # finds the log-in button and clicks it
-                self.m_driver.find_element_by_xpath('//div/button[@id="loginbutton"]').click()
+                l_button = WebDriverWait(self.m_driver, 60).until(
+                    EC.presence_of_element_located((By.XPATH, '//div/button[@id="loginbutton"]')))
+                l_button.click()
                 self.m_logger.info('Login button clicked')
 
                 # wait for the presence of the `mainContainer` element, indicating post login page load
@@ -300,7 +304,8 @@ class BrowserDriver:
     def key_slow(self, p_element, p_text):
         for l in p_text:
             p_element.send_keys(l)
-            time.sleep(random.randint(5, 10)/10.0)
+            self.m_logger.info(l)
+            time.sleep(random.randint(30, 70)/100.0)
 
     def log_out(self):
         """
