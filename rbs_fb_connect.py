@@ -14,6 +14,8 @@ from subprocess import run, PIPE
 
 import random
 import sys
+import io
+from PIL import Image
 
 from ec_utilities import *
 import wrapvpn
@@ -210,17 +212,21 @@ class BrowserDriver:
         self.m_logger.info('Loading Facebook log-in page')
         self.m_driver.get('http://www.facebook.com')
 
+        l_stage = -1
         try:
+            l_stage = 0
             # wait for the presence of the user ID (or e-mail) text input field.
             l_userInput = WebDriverWait(self.m_driver, 60).until(
                 EC.presence_of_element_located((By.XPATH, '//td/input[@id="email"]')))
 
+            l_stage = 1
             # sends the user ID string to it
             l_userInput.clear()
             # l_userInput.send_keys(p_user)
             self.key_slow(l_userInput, p_user)
             self.m_logger.info('User ID entered: {0}'.format(p_user))
 
+            l_stage = 2
             # wait for the presence of the user password (or e-mail) text input field.
             l_pwdInput = WebDriverWait(self.m_driver, 60).until(
                 EC.presence_of_element_located((By.XPATH, '//td/input[@id="pass"]')))
@@ -231,6 +237,7 @@ class BrowserDriver:
             self.key_slow(l_pwdInput, p_passwd)
             self.m_logger.info('Password entered: {0}'.format(p_passwd))
 
+            l_stage = 3
             # finds the log-in button and clicks it
             l_button = WebDriverWait(self.m_driver, 60).until(
                 EC.presence_of_element_located((By.XPATH, '//label[@id="loginbutton"]/input')))
@@ -239,6 +246,7 @@ class BrowserDriver:
 
             # time.sleep(3600)
 
+            l_stage = 4
             l_outcome = WebDriverWait(self.m_driver, 60).until(
                 lambda p_driver: p_driver.find_elements(By.XPATH, '//div[@id="mainContainer"]') or
                                  p_driver.find_elements(By.XPATH, '//div[@class="loggedout_menubar_container"]'))
@@ -248,6 +256,7 @@ class BrowserDriver:
             else:
                 # second login window
                 # wait for the presence of the user ID (or e-mail) text input field.
+                l_stage = 5
                 l_userInput = WebDriverWait(self.m_driver, 60).until(
                     EC.presence_of_element_located((By.XPATH, '//div/input[@id="email"]')))
 
@@ -258,6 +267,7 @@ class BrowserDriver:
                 self.m_logger.info('User ID entered: {0}'.format(p_user))
 
                 # wait for the presence of the user password (or e-mail) text input field.
+                l_stage = 6
                 l_pwdInput = WebDriverWait(self.m_driver, 60).until(
                     EC.presence_of_element_located((By.XPATH, '//div/input[@id="pass"]')))
 
@@ -268,12 +278,14 @@ class BrowserDriver:
                 self.m_logger.info('Password entered: {0}'.format(p_passwd))
 
                 # finds the log-in button and clicks it
+                l_stage = 7
                 l_button = WebDriverWait(self.m_driver, 60).until(
                     EC.presence_of_element_located((By.XPATH, '//div/button[@id="loginbutton"]')))
                 l_button.click()
                 self.m_logger.info('Login button clicked')
 
                 # wait for the presence of the `mainContainer` element, indicating post login page load
+                l_stage = 8
                 WebDriverWait(self.m_driver, 60).until(
                     EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
 
@@ -281,9 +293,18 @@ class BrowserDriver:
 
         except (EX.TimeoutException, EX.NoSuchElementException) as e:
             if type(e) == EX.TimeoutException:
-                self.m_logger.critical('Did not find user ID/pwd input or post-login mainContainer')
+                self.m_logger.critical(
+                    'Timeout during a WebDriverWait. l_stage : {0}'.format(l_stage))
             else:
-                self.m_logger.critical('Could not find Login button')
+                self.m_logger.critical(
+                    'NoSuchElementException. l_stage : {0}'.format(l_stage))
+
+            self.m_logger.info('Current URL: {0}'.format(self.m_driver.current_url))
+            l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
+            self.m_logger.info('Whole HTML of <body>: ' + l_body)
+            l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+            l_img.save('Login_as_scrape_failure_{0}_{1}.png'.format(p_user,
+                datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
 
             if self.m_vpn_handle is not None:
                 self.m_vpn_handle.close()
@@ -654,6 +675,9 @@ class BrowserDriver:
                     self.m_logger.critical('Could not retrieve token in status line')
                     l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
                     self.m_logger.info('Whole HTML of <body>: ' + l_body)
+                    l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+                    l_img.save(
+                        'Login_as_API_failure_{0}.png'.format(datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
                     raise BrowserDriverException('Could not retrieve token in status line')
 
             l_accessToken = l_status.text.split('|')[1]
@@ -663,6 +687,8 @@ class BrowserDriver:
 
             l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
             self.m_logger.info('Whole HTML of <body>: ' + l_body)
+            l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+            l_img.save('Login_as_API_failure_{0}.png'.format(datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
             raise BrowserDriverException('Did not find status line')
 
         self.m_logger.info('Successfully logged in as [{0}]'.format(p_user))
