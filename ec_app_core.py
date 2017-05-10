@@ -126,11 +126,18 @@ class EcAppCore(threading.Thread):
         Every tenth time (once in 5 min.) a full recording of system parameters is made through
         `psutil <https://pythonhosted.org/psutil/>`_ and stored in `TB_MSG`.
         """
-        l_thread_list = []
+        l_thread_list_letter = []
+        l_thread_list_other = []
         for t in threading.enumerate():
-            l_thread_list.append(t.name)
-        l_thread_list.sort()
-        l_thread_list = ''.join(l_thread_list)
+            if t.name == 'MainThread':
+                l_thread_list_letter.append('M')
+            elif len(t.name) == 1:
+                l_thread_list_letter.append(t.name)
+            else:
+                l_thread_list_other.append(t.name)
+        l_thread_list_letter.sort()
+        l_thread_list_other.sort()
+        l_thread_list = '[{0}]-[{1}]'.format(''.join(l_thread_list_letter), '/'.join(l_thread_list_other))
 
         l_mem = psutil.virtual_memory()
 

@@ -216,8 +216,9 @@ class BrowserDriver:
                 EC.presence_of_element_located((By.XPATH, '//td/input[@id="email"]')))
 
             # sends the user ID string to it
-            l_userInput.send_keys(p_user)
             l_userInput.clear()
+            # l_userInput.send_keys(p_user)
+            self.key_slow(l_userInput, p_user)
             self.m_logger.info('User ID entered: {0}'.format(p_user))
 
             # wait for the presence of the user password (or e-mail) text input field.
@@ -225,18 +226,55 @@ class BrowserDriver:
                 EC.presence_of_element_located((By.XPATH, '//td/input[@id="pass"]')))
 
             # sends the password string to it
-            l_pwdInput.send_keys(p_passwd)
             l_pwdInput.clear()
+            # l_pwdInput.send_keys(p_passwd)
+            self.key_slow(l_pwdInput, p_passwd)
             self.m_logger.info('Password entered: {0}'.format(p_passwd))
 
             # finds the log-in button and clicks it
             self.m_driver.find_element_by_xpath('//label[@id="loginbutton"]/input').click()
             self.m_logger.info('Login button clicked')
 
-            # wait for the presence of the `mainContainer` element, indicating post login page load
-            WebDriverWait(self.m_driver, 60).until(
-                EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
-            self.m_logger.info('User page display started')
+            # time.sleep(3600)
+
+            l_outcome = WebDriverWait(self.m_driver, 60).until(
+                lambda p_driver: p_driver.find_elements(By.XPATH, '//div[@id="mainContainer"]') or
+                                 p_driver.find_elements(By.XPATH, '//div[@class="loggedout_menubar_container"]'))
+
+            if l_outcome[0].get_attribute('id') == 'mainContainer':
+                self.m_logger.info('User page display started')
+            else:
+                # second login window
+                # wait for the presence of the user ID (or e-mail) text input field.
+                l_userInput = WebDriverWait(self.m_driver, 60).until(
+                    EC.presence_of_element_located((By.XPATH, '//div/input[@id="email"]')))
+
+                # sends the user ID string to it
+                l_userInput.clear()
+                # l_userInput.send_keys(p_user)
+                self.key_slow(l_userInput, p_user)
+                self.m_logger.info('User ID entered: {0}'.format(p_user))
+
+                # wait for the presence of the user password (or e-mail) text input field.
+                l_pwdInput = WebDriverWait(self.m_driver, 60).until(
+                    EC.presence_of_element_located((By.XPATH, '//div/input[@id="pass"]')))
+
+                # sends the password string to it
+                l_pwdInput.clear()
+                # l_pwdInput.send_keys(p_passwd)
+                self.key_slow(l_pwdInput, p_passwd)
+                self.m_logger.info('Password entered: {0}'.format(p_passwd))
+
+                # finds the log-in button and clicks it
+                self.m_driver.find_element_by_xpath('//div/button[@id="loginbutton"]').click()
+                self.m_logger.info('Login button clicked')
+
+                # wait for the presence of the `mainContainer` element, indicating post login page load
+                WebDriverWait(self.m_driver, 60).until(
+                    EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
+
+                self.m_logger.info('User page display started')
+
         except (EX.TimeoutException, EX.NoSuchElementException) as e:
             if type(e) == EX.TimeoutException:
                 self.m_logger.critical('Did not find user ID/pwd input or post-login mainContainer')
@@ -258,6 +296,11 @@ class BrowserDriver:
 
         self.m_loggedIn = True
         self.m_phantomID = p_user
+
+    def key_slow(self, p_element, p_text):
+        for l in p_text:
+            p_element.send_keys(l)
+            time.sleep(random.randint(5, 10)/10.0)
 
     def log_out(self):
         """

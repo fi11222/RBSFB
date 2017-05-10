@@ -162,6 +162,7 @@ class RbsBackgroundTask(threading.Thread):
         :return: Nothing 
         """
         l_phantomList = [
+            ('nicolas.reimen@gmail.com', 'murugan!', None, 2, 23),
             ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn', 12, 3),
             # ('kabeer.burnahuddin@gmail.com', '15Eyyaka', 'India.Maharashtra.Mumbai.UDP.ovpn', 2, 17),
             ('kabeer.burnahuddin@gmail.com', '15Eyyaka', None, 2, 17),
