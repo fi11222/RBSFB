@@ -249,10 +249,23 @@ class BrowserDriver:
             l_stage = 4
             l_outcome = WebDriverWait(self.m_driver, 60).until(
                 lambda p_driver: p_driver.find_elements(By.XPATH, '//div[@id="mainContainer"]') or
+                                 p_driver.find_elements(By.XPATH, '//label/input[@name="clicked_not_now[1]"]') or
                                  p_driver.find_elements(By.XPATH, '//div[@class="loggedout_menubar_container"]'))
+            l_outcome = l_outcome[0]
 
-            if l_outcome[0].get_attribute('id') == 'mainContainer':
+            if l_outcome.get_attribute('id') == 'mainContainer':
+                # the user is logged-in and his home pages is starting to appear
                 self.m_logger.info('User page display started')
+            elif l_outcome.get_attribute('name') == 'clicked_not_now[1]':
+                # a security warning page has been displayed
+                self.m_logger.info('FB Security warning')
+                l_outcome.click()
+
+                l_stage = 9
+                WebDriverWait(self.m_driver, 60).until(
+                    EC.presence_of_element_located((By.XPATH, '//div[@id="mainContainer"]')))
+
+                self.m_logger.info('[Skipped FB security warning] User page display started')
             else:
                 # second login window
                 # wait for the presence of the user ID (or e-mail) text input field.
@@ -303,8 +316,12 @@ class BrowserDriver:
             l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
             self.m_logger.info('Whole HTML of <body>: ' + l_body)
             l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
-            l_img.save('Login_as_scrape_failure_{0}_{1}.png'.format(p_user,
+            l_img.save('./images_error/login_as_scrape_failure_{0}_{1}.png'.format(p_user,
                 datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
+
+            # "Current URL: https://www.facebook.com/mobileprotection?source=mobile_mirror_nux"
+            if re.search(r'mobileprotection', self.m_driver.current_url):
+                self.log_out()
 
             if self.m_vpn_handle is not None:
                 self.m_vpn_handle.close()
@@ -638,6 +655,10 @@ class BrowserDriver:
                             self.m_logger.critical('[03] Something is badly wrong (Unknown): {0}'.format(repr(e)))
                             l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
                             self.m_logger.info('Whole HTML of <body>: ' + l_body)
+                            l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+                            l_img.save(
+                                './images_error/login_as_API_failure_{0}.png'.format(
+                                    datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
                             raise BrowserDriverException(
                                 '[03] Something is badly wrong (Unknown): {0}'.format(repr(e)))
 
@@ -677,7 +698,8 @@ class BrowserDriver:
                     self.m_logger.info('Whole HTML of <body>: ' + l_body)
                     l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
                     l_img.save(
-                        'Login_as_API_failure_{0}.png'.format(datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
+                        './images_error/login_as_API_failure_{0}.png'.format(
+                            datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
                     raise BrowserDriverException('Could not retrieve token in status line')
 
             l_accessToken = l_status.text.split('|')[1]
@@ -688,7 +710,8 @@ class BrowserDriver:
             l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
             self.m_logger.info('Whole HTML of <body>: ' + l_body)
             l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
-            l_img.save('Login_as_API_failure_{0}.png'.format(datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
+            l_img.save('./images_error/login_as_API_failure_{0}.png'.format(
+                datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
             raise BrowserDriverException('Did not find status line')
 
         self.m_logger.info('Successfully logged in as [{0}]'.format(p_user))

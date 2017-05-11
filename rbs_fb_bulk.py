@@ -711,7 +711,7 @@ class BulkDownloader:
             for l_suf, l_count in l_suf_list:
                 print('{0:4} {1}'.format(l_count, l_suf))
 
-        self.m_logger.info('Start ocr_images()')
+        self.m_logger.info('End ocr_images()')
 
     def performRequest(self, p_request):
         """
