@@ -159,7 +159,7 @@ class RbsBackgroundTask(threading.Thread):
         
         The loop also checks for the presence of the internet connection and suspends operation if not.
         
-        :return: Nothing 
+        :return: Nothing
         """
         l_phantomList = [
             ('karim.elmoulaid@gmail.com', '15Eyyaka', 'Canada.Quebec.Montreal_LOC2S1.TCP.ovpn', 12, 3),
@@ -167,6 +167,7 @@ class RbsBackgroundTask(threading.Thread):
             ('nicolas.reimen@gmail.com', 'murugan!', None, 2, 17),
             ('yahia.almasoodi@yahoo.com', '15Eyyaka', 'UnitedArabEmirates.Dubai_LOC1S1.TCP.ovpn', 4, 19),
             ('bulk', None, None, 20, 1)
+            # ('bilal.mohinuddin@yahoo.com', '15Eyyaka', 'Qatar.Doha.TCP.ovpn', 4, 19),
             # ('bulk', None, None, 1, 24)
             # ('kabeer.burnahuddin@gmail.com', '15Eyyaka', 'India.Maharashtra.Mumbai.UDP.ovpn', 2, 17),
         ]

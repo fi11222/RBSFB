@@ -1917,8 +1917,17 @@ class BulkDownloader:
                 l_likeCount = 0
                 while True:
                     for l_liker in l_responseData['data']:
-                        l_likerId = l_liker['id']
-                        l_likerName = l_liker['name']
+                        try:
+                            l_likerId = l_liker['id']
+                        except KeyError:
+                            self.m_logger.warning('No Id found in Liker: {0}'.format(l_liker))
+                            continue
+
+                        try:
+                            l_likerName = l_liker['name']
+                        except KeyError:
+                            self.m_logger.warning('No name found in Liker: {0}'.format(l_liker))
+                            continue
 
                         l_dtMsgStr = l_dtMsg.strftime('%Y-%m-%dT%H:%M:%S+000')
 

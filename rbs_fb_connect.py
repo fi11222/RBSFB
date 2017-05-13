@@ -313,8 +313,7 @@ class BrowserDriver:
                     'NoSuchElementException. l_stage : {0}'.format(l_stage))
 
             self.m_logger.info('Current URL: {0}'.format(self.m_driver.current_url))
-            l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
-            self.m_logger.info('Whole HTML of <body>: ' + l_body)
+            self.dump_html()
             l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
             l_img.save('./images_error/login_as_scrape_failure_{0}_{1}.png'.format(p_user,
                 datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
@@ -359,7 +358,12 @@ class BrowserDriver:
             l_settings.click()
         except EX.TimeoutException:
             self.m_logger.critical('Did not find settings arrow down button')
+            self.m_logger.info('Current URL: {0}'.format(self.m_driver.current_url))
             self.dump_html()
+            l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+            l_img.save('./images_error/login_as_scrape_failure_{0}_{1}.png'.format(p_user,
+                datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
+
             raise
 
         try:
@@ -371,7 +375,11 @@ class BrowserDriver:
             l_logoutButton.click()
         except EX.TimeoutException:
             self.m_logger.critical('Did not find logout button')
+            self.m_logger.info('Current URL: {0}'.format(self.m_driver.current_url))
             self.dump_html()
+            l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
+            l_img.save('./images_error/login_as_scrape_failure_{0}_{1}.png'.format(p_user,
+                datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
             raise
 
         # close vpn if present
@@ -653,8 +661,7 @@ class BrowserDriver:
                             raise BrowserDriverException('[02] Something is badly wrong (Timeout) ...')
                         except Exception as e:
                             self.m_logger.critical('[03] Something is badly wrong (Unknown): {0}'.format(repr(e)))
-                            l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
-                            self.m_logger.info('Whole HTML of <body>: ' + l_body)
+                            self.dump_html()
                             l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
                             l_img.save(
                                 './images_error/login_as_API_failure_{0}.png'.format(
@@ -694,8 +701,7 @@ class BrowserDriver:
                 l_count += 1
                 if l_count >= 25:
                     self.m_logger.critical('Could not retrieve token in status line')
-                    l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
-                    self.m_logger.info('Whole HTML of <body>: ' + l_body)
+                    self.dump_html()
                     l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
                     l_img.save(
                         './images_error/login_as_API_failure_{0}.png'.format(
@@ -706,9 +712,7 @@ class BrowserDriver:
 
         except EX.TimeoutException:
             self.m_logger.critical('Did not find status line')
-
-            l_body = self.m_driver.find_element_by_xpath('//body').get_attribute('innerHTML')
-            self.m_logger.info('Whole HTML of <body>: ' + l_body)
+            self.dump_html()
             l_img = Image.open(io.BytesIO(self.m_driver.get_screenshot_as_png()))
             l_img.save('./images_error/login_as_API_failure_{0}.png'.format(
                 datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
