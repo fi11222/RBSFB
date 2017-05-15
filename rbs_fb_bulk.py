@@ -1,12 +1,9 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-from PIL import Image
 from PIL import ImageEnhance, ImageFilter
-from PIL import ImageOps
 
 import json
-import io
 import base64
 import socket
 from tesserocr import PyTessBaseAPI, RIL
@@ -720,7 +717,8 @@ class BulkDownloader:
         :param p_request: The API request 
         :return: The response to the request from the FB API server.
         """
-        self.m_logger.debug('Start performRequest()')
+        self.m_logger.debug('Start performRequest() Cycle: {0}'.format(
+            self.m_FBRequestCount % EcAppParam.gcm_token_lifespan))
 
         l_request = p_request
 
@@ -733,13 +731,15 @@ class BulkDownloader:
         # some old tokens may remain in the 'next' parameters kept from previous requests)
         l_request = self.m_browserDriver.freshen_token(l_request)
 
-        # request new token every G_TOKEN_LIFESPAN API requests
-        if self.m_FBRequestCount > 0 and self.m_FBRequestCount % EcAppParam.gcm_token_lifespan == 0:
+        # request new token every G_TOKEN_LIFESPAN API requests, or when token is stale
+        if (self.m_FBRequestCount > 0 and self.m_FBRequestCount % EcAppParam.gcm_token_lifespan == 0)\
+                or self.m_browserDriver.token_is_stale():
             l_request = self.m_browserDriver.renew_token_and_request(l_request)
 
         self.m_FBRequestCount += 1
 
         l_errCount = 0
+        l_expiry_tries = 0
         while not l_finished:
             try:
                 l_response = urllib.request.urlopen(l_request, timeout=20).read().decode('utf-8').strip()
@@ -796,9 +796,13 @@ class BulkDownloader:
 
                     # Session expired ---> nothing to do
                     elif re.search(r'Session has expired', l_FBMessage):
-                        l_msg = 'FB session expiry msg: {0}'.format(l_FBMessage)
-                        self.m_logger.critical(l_msg)
-                        raise BulkDownloaderException(l_msg)
+                        if l_expiry_tries < 3:
+                            l_request = self.m_browserDriver.renew_token_and_request(l_request)
+                            l_expiry_tries += 1
+                        else:
+                            l_msg = 'FB session expiry msg: {0}'.format(l_FBMessage)
+                            self.m_logger.critical(l_msg)
+                            raise BulkDownloaderException(l_msg)
 
                     # Unsupported get request ---> return empty data and abandon request attempt
                     elif re.search(r'Unsupported get request', l_FBMessage):
@@ -849,7 +853,8 @@ class BulkDownloader:
                 time.sleep(1)
                 l_errCount += 1
 
-        self.m_logger.debug('End performRequest()')
+        self.m_logger.debug('End performRequest()  Cycle: {0}'.format(
+            self.m_FBRequestCount % EcAppParam.gcm_token_lifespan))
         return l_response
 
     def getWait(self, p_errorCount):

@@ -80,8 +80,9 @@ class BrowserDriver:
         # FB User ID and password for API access
         self.m_user_api = ''
         self.m_pass_api = ''
-        # FB token for API access
+        # FB token for API access + expiry date
         self.m_token_api = ''
+        self.m_token_expiry = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(hours=1)
 
         if EcAppParam.gcm_headless:
             # if headless mode requested, starts the pyvirtualdisplay xvfb driver
@@ -148,6 +149,14 @@ class BrowserDriver:
         :return: Boolean. True if past expiration date.
         """
         return self.m_expirationDate < datetime.datetime.now(tz=pytz.utc)
+
+    def token_is_stale(self):
+        """
+        API token past expiry date flag.
+
+        :return: Boolean. True if past expiry date.
+        """
+        return self.m_token_expiry < datetime.datetime.now(tz=pytz.utc)
 
     def internet_check(self):
         """
@@ -565,6 +574,7 @@ class BrowserDriver:
         if l_accessToken is not None:
             self.m_logger.info('g_FBToken before: {0}'.format(self.m_token_api))
             self.m_token_api = l_accessToken
+            self.m_token_expiry = datetime.datetime.now(tz=pytz.utc) + datetime.timedelta(hours=1)
             self.m_logger.info('g_FBToken new   : {0}'.format(self.m_token_api))
         else:
             self.m_logger.warning('Cannot obtain FB Token for:' + self.m_user_api)
